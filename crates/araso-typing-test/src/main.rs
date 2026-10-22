@@ -224,6 +224,28 @@ fn memory() -> (usize, usize) {
     (counters.PrivateUsage / 1024, counters.WorkingSetSize / 1024)
 }
 
+/// The Araso DLL loaded in this process, and the machine it's built for.
+fn araso_module() -> Option<String> {
+    use windows::Win32::Foundation::HMODULE;
+    use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
+    use windows::Win32::System::ProcessStatus::EnumProcessModules;
+    use windows::Win32::System::Threading::GetCurrentProcess;
+    let mut modules = vec![HMODULE::default(); 1024];
+    let mut needed = 0u32;
+    unsafe {
+        EnumProcessModules(GetCurrentProcess(), modules.as_mut_ptr(), (modules.len() * std::mem::size_of::<HMODULE>()) as u32, &mut needed)
+            .ok()?;
+    }
+    let count = (needed as usize / std::mem::size_of::<HMODULE>()).min(modules.len());
+    modules[..count].iter().find_map(|&module| {
+        let mut buffer = [0u16; 1024];
+        let n = unsafe { GetModuleFileNameW(Some(module), &mut buffer) } as usize;
+        let path = String::from_utf16_lossy(&buffer[..n]);
+        let name = path.rsplit('\\').next().unwrap_or_default().to_lowercase();
+        name.starts_with("araso_tsf").then_some(path)
+    })
+}
+
 fn text_of(edit: HWND) -> String {
     unsafe {
         let length = GetWindowTextLengthW(edit) as usize;
@@ -390,6 +412,11 @@ fn main() {
             "EDIT, IMM32"
         };
         println!("{} of {} cases as expected ({field})", cases.len() - failures, cases.len());
+        println!(
+            "{}-bit test process, Araso from {}",
+            std::mem::size_of::<usize>() * 8,
+            araso_module().unwrap_or_else(|| "nowhere (not loaded)".into())
+        );
         let after = memory();
         println!(
             "memory with Araso: private {} → {} KB, working set {} → {} KB",

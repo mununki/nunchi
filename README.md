@@ -54,7 +54,8 @@ Framework)로 새로 만들었습니다. 옮긴 기준은 원본 커밋 [22e7d3d
 
 ## 빌드와 테스트
 
-Rust(stable, MSVC)와 Visual Studio Build Tools(C++ 워크로드)가 필요합니다.
+Rust(stable, MSVC)와 Visual Studio Build Tools(C++ 워크로드)가 필요합니다. 32비트 앱(카카오톡 등)용 DLL도 만들려면
+`rustup target add i686-pc-windows-msvc`를 한 번 실행하세요.
 
 ```bash
 cargo test -p araso-core          # 테스트 170개 (대부분 원본 Swift 테스트를 옮긴 것)
@@ -67,12 +68,14 @@ cargo run -p araso-cli -- -v "dkssud hello githubdp"
 powershell -ExecutionPolicy Bypass -File scripts/dev-register.ps1
 ```
 
-관리자 권한(UAC)을 묻고 `target\dev-install`의 사본을 등록합니다. 그다음 **설정 → 시간 및 언어 → 언어 및 지역 →
-한국어 → 언어 옵션 → 키보드 추가 → Araso**로 한 번 추가하고, Win+Space로 Araso를 고르세요.
+64비트와 32비트 DLL을 둘 다 빌드하고, 관리자 권한(UAC)을 한 번 물은 뒤 `target\dev-install`의 사본을 각각의
+`regsvr32`로 등록합니다. 그다음 **설정 → 시간 및 언어 → 언어 및 지역 → 한국어 → 언어 옵션 → 키보드 추가 → Araso**로
+한 번 추가하고, Win+Space로 Araso를 고르세요.
 
-- 고친 뒤 다시 넣기: `scripts/dev-update.ps1` (UAC 없이, 새로 여는 앱부터 반영)
+- 고친 뒤 다시 넣기: `scripts/dev-update.ps1` (UAC 없이, 두 DLL 모두, 새로 여는 앱부터 반영)
 - 실제 키 입력 테스트: `cargo run --release -p araso-typing-test -- --richedit` (`--imm`: IMM32 앱처럼, 옵션 없이: Win32 EDIT).
-  자기 창을 띄워 몇 초간 키보드를 쓰고, 포커스를 잃으면 멈춥니다.
+  32비트 앱으로 확인하려면 `--target i686-pc-windows-msvc`를 붙입니다. 자기 창을 띄워 몇 초간 키보드를 쓰고,
+  포커스를 잃으면 멈춥니다. 끝에 어느 DLL이 입력을 맡았는지와 메모리를 보여 줍니다.
 - 제거: `scripts/dev-register.ps1 -Unregister`
 
 ## 구조
@@ -89,7 +92,6 @@ powershell -ExecutionPolicy Bypass -File scripts/dev-register.ps1
 
 - **IMM32 앱**(클래식 Win32 입력란, Qt, Java, 많은 게임)은 확정한 글자를 입력기에 돌려주지 못해 *확정한 뒤에 고치기*가 안 됩니다.
   그런 앱에서는 `holdSpace`를 켜면 Space 뒤에도 단어를 잡아 둡니다(원본의 터미널 대책과 같음). 치는 중에 바꾸기는 됩니다.
-- 64비트 앱만: 32비트 DLL은 아직 빌드하지 않았습니다.
 - 스토어(샌드박스) 앱은 개발 설치 경로(`target\dev-install`)의 DLL을 읽지 못해 Araso를 쓸 수 없습니다. `Program Files`에 설치하는 패키지가 필요합니다.
 - 설정 창, 작업 표시줄 메뉴, 업데이트 확인, 일본어 한자 변환(MS-IME 엔진 연동 예정)이 없습니다.
 
