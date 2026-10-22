@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = ["crates/araso-core", "crates/araso-cli", "crates/araso-tsf", "crates/araso-typing-test"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/nyttastudio/araso"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+# araso-core's build script turns ~10 MB of word lists into tables: optimized, it takes a second.
+[profile.dev.build-override]
+opt-level = 3
+
+[profile.release.build-override]
+opt-level = 3

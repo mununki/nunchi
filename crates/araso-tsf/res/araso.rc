@@ -1,0 +1,29 @@
+#pragma code_page(65001)
+
+1 ICON "araso.ico"
+
+1 VERSIONINFO
+FILEVERSION 0,1,0,0
+PRODUCTVERSION 0,1,0,0
+FILEOS 0x40004
+FILETYPE 0x2
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "041204B0"
+        BEGIN
+            VALUE "CompanyName", "Araso for Windows"
+            VALUE "FileDescription", "Araso input method"
+            VALUE "FileVersion", "0.1.0"
+            VALUE "InternalName", "araso_tsf"
+            VALUE "LegalCopyright", "MIT License"
+            VALUE "OriginalFilename", "araso_tsf.dll"
+            VALUE "ProductName", "Araso"
+            VALUE "ProductVersion", "0.1.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0412, 1200
+    END
+END

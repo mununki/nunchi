@@ -1,0 +1,7 @@
+korean_vocabulary.txt is derived from the full Korean list of FrequencyWords by Hermit Dave
+(https://github.com/hermitdave/FrequencyWords, content/2018/ko/ko_full.txt), licensed under
+Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0,
+https://creativecommons.org/licenses/by-sa/4.0/). Changes: only words
+of two or more Hangul syllables seen at least twice were kept, with their counts
+(tools/build_korean_vocabulary.py).
+korean_vocabulary.txt itself is distributed under the same license, CC BY-SA 4.0.
