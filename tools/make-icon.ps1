@@ -7,7 +7,11 @@
 #                 small red x at its top right (not 가/A, which reads as Korean/English)
 # Mode icons are a white glyph with a 1-pixel outline in black at 50%, as Windows asks of IME
 # mode icons: they show on light and dark taskbars alike.
-param([string]$Dir = (Join-Path $PSScriptRoot '..\crates\nunchi-tsf\res'))
+# And the brand icon as a 256-pixel PNG in docs, for the README and wherever else it's shown.
+param(
+    [string]$Dir = (Join-Path $PSScriptRoot '..\crates\nunchi-tsf\res'),
+    [string]$Docs = (Join-Path $PSScriptRoot '..\docs')
+)
 
 Add-Type -AssemblyName System.Drawing
 
@@ -109,3 +113,10 @@ New-Item -ItemType Directory -Force $Dir | Out-Null
 Write-Ico (Join-Path $Dir 'nunchi.ico') @(16, 20, 24, 32, 40, 48, 64, 256) { param($s) Draw-Brand $s }
 Write-Ico (Join-Path $Dir 'mode-on.ico') @(16, 20, 24, 32, 40, 48) { param($s) Draw-Mode $s ([string][char]0xAC00) }
 Write-Ico (Join-Path $Dir 'mode-off.ico') @(16, 20, 24, 32, 40, 48) { param($s) Draw-Mode $s ([string][char]0xAC00) -Off }
+
+New-Item -ItemType Directory -Force $Docs | Out-Null
+$png = Join-Path $Docs 'icon.png'
+$bitmap = Draw-Brand 256
+$bitmap.Save($png, [System.Drawing.Imaging.ImageFormat]::Png)
+$bitmap.Dispose()
+Write-Output "wrote $png"

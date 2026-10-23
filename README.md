@@ -1,3 +1,5 @@
+<img src="docs/icon.png" alt="눈치 아이콘" width="96">
+
 # 눈치 (Nunchi)
 
 macOS 입력기 [Araso](https://github.com/nyttastudio/araso)(아라소)를 바탕으로 만든 Windows 입력기입니다.
@@ -150,6 +152,7 @@ CI(`.github/workflows/ci.yml`)가 같은 설치 파일을 만들어 릴리스에
 | `crates/nunchi-cli` | 원본 `araso-cli`와 같은 명령줄 도구 |
 | `crates/nunchi-typing-test` | 진짜 키 이벤트로 입력해 보는 테스트, 케이스(`cases/`)는 `nunchi-tsf` 테스트와 같이 씀 |
 | `data/` | 단어 목록과 모델(원본에서 복사), 출처와 라이선스는 `data/README.md` |
+| `docs/` | README에 쓰는 아이콘(`tools/make-icon.ps1`이 입력기 아이콘과 함께 그림) |
 
 ## 알려진 한계
 
