@@ -20,8 +20,10 @@ jobs:
       - name: Rust targets
         run: rustup target add i686-pc-windows-msvc
 
+      # The core's tests, and the input method typing the cases in crates\araso-typing-test\cases
+      # into real EDIT and RichEdit controls (no keyboard).
       - name: Test
-        run: cargo test --release -p araso-core
+        run: cargo test --release -p araso-core -p araso-tsf
 
       - name: Build (64-bit and 32-bit)
         run: |
@@ -47,3 +49,38 @@ jobs:
         run: |
           $setup = Get-ChildItem target\installer\Araso-Setup-*.exe | Select-Object -First 1
           gh release create "${{ github.ref_name }}" $setup.FullName --title "Araso ${{ github.ref_name }}" --generate-notes
+
+  # Real keys typed into each kind of field (scripts\typing-tests.ps1), with the input method
+  # registered on the runner. It needs the runner's desktop session to take keys and the
+  # foreground: until that proves dependable there, a failure here doesn't fail the build.
+  typing:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust targets
+        run: rustup target add i686-pc-windows-msvc
+
+      - name: Build (64-bit and 32-bit)
+        run: |
+          cargo build --release -p araso-tsf
+          cargo build --release -p araso-tsf --target i686-pc-windows-msvc
+
+      # As the installer does: registered for 64-bit and 32-bit apps, readable from the sandbox
+      # Store apps run in, and in the keyboard list (which adds Korean too).
+      - name: Register
+        shell: powershell
+        run: |
+          $x64 = (Resolve-Path target\release\araso_tsf.dll).Path
+          $x86 = (Resolve-Path target\i686-pc-windows-msvc\release\araso_tsf.dll).Path
+          foreach ($dir in (Split-Path $x64), (Split-Path $x86)) {
+            icacls $dir /grant '*S-1-15-2-1:(OI)(CI)(RX)' '*S-1-15-2-2:(OI)(CI)(RX)' | Out-Null
+          }
+          & "$env:SystemRoot\System32\regsvr32.exe" /s $x64
+          & "$env:SystemRoot\SysWOW64\regsvr32.exe" /s $x86
+          & "$env:SystemRoot\System32\rundll32.exe" "$x64,AddToKeyboardList"
+
+      - name: Typing tests
+        shell: powershell
+        run: scripts\typing-tests.ps1 -Installed -Yes

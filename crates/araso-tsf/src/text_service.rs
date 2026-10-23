@@ -8,7 +8,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use araso_core::{InputSession, Key, TextClient, TextRange};
+use araso_core::{InputSession, Key, TextClient};
 use windows::core::{implement, Interface, Ref, Result, BOOL, GUID};
 use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
@@ -199,8 +199,7 @@ impl TextService_Impl {
         let word = {
             let inner = self.inner.borrow();
             let Some(word) = inner.edit_word.clone() else { return };
-            let caret = TextRange::new(word.word.range.end(), 0);
-            if unsafe { GetFocus() } == word.field.hwnd && edit_field::selection(word.field.hwnd) == Some(caret) {
+            if unsafe { GetFocus() } == word.field.hwnd && !edit_field::caret_left(&word) {
                 return;
             }
             word

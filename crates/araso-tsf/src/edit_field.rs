@@ -117,6 +117,11 @@ fn group(field: Field, start: bool) {
     }
 }
 
+/// The caret is no longer right after the word: a click (or the app) moved it.
+pub fn caret_left(word: &EditWord) -> bool {
+    selection(word.field.hwnd) != Some(TextRange::new(word.word.range.end(), 0))
+}
+
 /// The caret left the word (a click): the word stays as it is and becomes one undo step, as a
 /// committed word does, and its underline goes. The caret stays where it was put.
 pub fn settle(word: EditWord) {
@@ -334,3 +339,7 @@ impl TextClient for EditClient<'_> {
         (units.len() == range.length).then(|| String::from_utf16_lossy(&units))
     }
 }
+
+#[cfg(test)]
+#[path = "edit_field_tests.rs"]
+mod tests;

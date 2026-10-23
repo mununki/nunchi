@@ -1,0 +1,6 @@
+# The switch key (⇧ Shift+Esc; 한/영 and a right Alt tap do the same) on the word being typed and
+# on a word just committed. Last of all: a word switched is learned (twice: for good), and that
+# would change the cases after it in the same run.
+# A field that does its own IMM32 handling can't hand a committed word back.
+hello ⇧	ㅗ디ㅣㅐ 	-imm
+dkssud⇧ 	dkssud 	

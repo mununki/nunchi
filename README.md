@@ -68,9 +68,30 @@ Rust(stable, MSVC)와 Visual Studio Build Tools(C++ 워크로드)가 필요합�
 `rustup target add i686-pc-windows-msvc`를 한 번 실행하세요.
 
 ```bash
-cargo test -p araso-core          # 테스트 170개 (대부분 원본 Swift 테스트를 옮긴 것)
+cargo test --release -p araso-core -p araso-tsf
 cargo run -p araso-cli -- -v "dkssud hello githubdp"
 ```
+
+테스트는 세 층입니다. 앞의 둘은 키보드를 쓰지 않아 언제든, CI에서도 돕니다.
+
+- `araso-core`: 판단 엔진과 입력 세션 테스트 170개(대부분 원본 Swift 테스트를 옮긴 것)
+- `araso-tsf`: 입력기가 실제 EDIT·RichEdit 컨트롤에 단어를 넣고 바꾸는 방식(탐색기, 카카오톡). 키 대신 세션을 직접
+  불러서, 아래 실제 키 테스트와 같은 케이스 파일을 씁니다.
+- 실제 키 테스트: 진짜 키 입력으로 입력란 종류마다(EDIT, IMM32 자체 처리, RichEdit TSF, RichEdit IMM32), 64·32비트,
+  스토어 앱 샌드박스까지. 커밋 전에 돌립니다.
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/typing-tests.ps1
+```
+
+개발 빌드를 새로 넣고 1분쯤 키를 칩니다. 그동안 키보드를 이 PC에 두고 건드리지 마세요(네트워크 KVM이면 다른
+컴퓨터로 키가 갈 수 있음). 끝에 요약을 보여 주고, 하나라도 틀리면 실패로 끝납니다. `-Installed`는 설치한 Araso로,
+`-Browser`는 Chrome(없으면 Edge)까지 시험합니다.
+
+케이스는 `crates/araso-typing-test/cases/*.tsv`에 `키<TAB>입력란에 보일 글자<TAB>입력란` 한 줄씩입니다. 마지막 칸은
+그 케이스가 맞는 입력란이고(`-imm`: 그것만 빼고, `edit,richedit-imm`: 그것만, 비우면 전부), 알려진 한계를 적어 둡니다.
+버그를 고치면 그 증상을 케이스로 더하세요. 단어를 바꾸면 학습하기 때문에 언어 바꾸기 케이스는 `switch.tsv`에 모아
+맨 마지막에 돕니다.
 
 ## 개발하면서 써 보기
 
@@ -86,7 +107,7 @@ powershell -ExecutionPolicy Bypass -File scripts/dev-register.ps1
 각각의 `regsvr32`로 등록하고, 키보드 목록에 "Araso (개발)"을 넣습니다. 처음 한 번만 하면 됩니다.
 
 - 고친 뒤 다시 넣기: `scripts/dev-update.ps1` (UAC 없이, 두 DLL 모두, 새로 여는 앱부터 반영)
-- 실제 키 입력 테스트: `cargo run --release -p araso-typing-test -- --dev --richedit` (`--imm`: IMM32 앱처럼,
+- 실제 키 입력 테스트 하나만: `cargo run --release -p araso-typing-test -- --dev --richedit` (`--imm`: IMM32 앱처럼,
   `--richedit-imm`: 카카오톡 입력창처럼 IMM32로 쓰는 RichEdit, 옵션 없이: Win32 EDIT, `--dev`를 빼면 설치한 Araso). 32비트 앱으로 확인하려면 `--target i686-pc-windows-msvc`를 붙입니다. 자기 창을 띄워
   몇 초간 키보드를 쓰고, 포커스를 잃으면 멈춥니다. 끝에 어느 DLL이 입력을 맡았는지와 메모리를 보여 줍니다.
   `--appcontainer`는 스토어 앱과 같은 샌드박스 안에서, `--browser`는 Chrome(없으면 Edge)의 입력란에서(지금 고른
@@ -102,7 +123,9 @@ powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1
 
 [Inno Setup 6](https://jrsoftware.org/isinfo.php)(`winget install JRSoftware.InnoSetup`)이 필요하고,
 `target\installer\Araso-Setup-<버전>.exe`가 나옵니다(버전은 `Cargo.toml`). GitHub에 `v0.1.0` 같은 태그를 올리면
-CI(`.github/workflows/ci.yml`)가 같은 설치 파일을 만들어 릴리스에 올립니다. 푸시할 때마다 테스트와 64·32비트 빌드도 돕니다.
+CI(`.github/workflows/ci.yml`)가 같은 설치 파일을 만들어 릴리스에 올립니다. 푸시할 때마다 키보드 없는 테스트와
+64·32비트 빌드도 돌고, 실제 키 테스트도 러너에 입력기를 등록해 돌립니다(러너의 데스크톱에서 믿을 만한지 지켜보는
+중이라, 이 작업은 실패해도 빌드를 막지 않음).
 
 ## 구조
 
@@ -111,7 +134,7 @@ CI(`.github/workflows/ci.yml`)가 같은 설치 파일을 만들어 릴리스에
 | `crates/araso-core` | 원본 ArasoCore를 옮긴 판단 엔진과 `InputSession`(플랫폼 코드 없음) |
 | `crates/araso-tsf` | TSF 입력기 DLL: 키 → `InputSession`, 조합 문자열 ↔ TSF composition |
 | `crates/araso-cli` | 원본 `araso-cli`와 같은 명령줄 도구 |
-| `crates/araso-typing-test` | 진짜 키 이벤트로 입력해 보는 테스트 |
+| `crates/araso-typing-test` | 진짜 키 이벤트로 입력해 보는 테스트, 케이스(`cases/`)는 `araso-tsf` 테스트와 같이 씀 |
 | `data/` | 단어 목록과 모델(원본에서 복사), 출처와 라이선스는 `data/README.md` |
 
 ## 알려진 한계

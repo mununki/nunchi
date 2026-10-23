@@ -2,8 +2,8 @@
 //! with Araso active in this process only, and compares the control's text with what the case
 //! expects. Araso must be registered (scripts\dev-register.ps1).
 //!
-//!   araso-typing-test                 the built-in cases
-//!   araso-typing-test cases.tsv       "keys<TAB>expected" per line
+//!   araso-typing-test                 the cases in cases/ (built in) that are for the field
+//!   araso-typing-test cases.tsv …     these scripts instead: "keys<TAB>expected<TAB>fields" per line
 //!   araso-typing-test --richedit      a RichEdit (TSF-aware) control instead of a plain EDIT (CUAS)
 //!   araso-typing-test --richedit-imm  a RichEdit left to IMM32 (KakaoTalk's chat input)
 //!   araso-typing-test --imm           a field that does its own IMM32 handling (Qt, Java, games)
@@ -36,19 +36,49 @@ const GUID_PROFILE: GUID = GUID::from_u128(0xc37c500f_1136_464d_bc89_601a354fc63
 const CLSID_ARASO_DEV: GUID = GUID::from_u128(0xaeca5114_3633_4707_bc7d_67ca80de068c);
 const GUID_PROFILE_DEV: GUID = GUID::from_u128(0x71fe9eda_947f_4439_818b_bdd4d8c0af97);
 
-const CASES: &[(&str, &str)] = &[
-    ("dkssudgktpdy hello ", "안녕하세요 hello "),
-    ("Stay hungry, stay foolishsms wkqtmdml akfdlek.", "Stay hungry, stay foolish는 잡스의 말이다."),
-    ("dlrjs githubdp commitgkf rjdi.", "이건 github에 commit할 거야."),
-    ("PDFvkdlf hellodnjfem ", "PDF파일 hello월드 "),
-    ("gksrnr⌫⌫ ", "한ㄱ "),
-    ("hello ⇧", "ㅗ디ㅣㅐ "),
-    ("dkssud⇧ ", "dkssud "),
-    ("dhsmf 3tl", "오늘 3시"),
-    ("dho?", "왜?"),
-    ("dkssud⏎", "안녕"),
-    ("https://example.com/dl ", "https://example.com/dl "),
+/// The scripts in cases/, built in: run when no script is named.
+const SCRIPTS: &[&str] = &[
+    include_str!("../cases/basic.tsv"),
+    include_str!("../cases/mid-word.tsv"),
+    include_str!("../cases/undo.tsv"),
+    // Last: a word switched is learned, and that changes the cases after it.
+    include_str!("../cases/switch.tsv"),
 ];
+
+/// A case of a script: the keys, what the field shows after them, and the kinds of field it is
+/// for ("-imm": all but that one; "edit,richedit-imm": only those; empty: all).
+struct Case {
+    keys: String,
+    expected: String,
+    fields: String,
+}
+
+impl Case {
+    fn applies_to(&self, field: &str) -> bool {
+        let names: Vec<&str> = self.fields.split(',').map(str::trim).filter(|n| !n.is_empty()).collect();
+        if names.iter().any(|n| n.strip_prefix('-') == Some(field)) {
+            return false;
+        }
+        let only: Vec<&&str> = names.iter().filter(|n| !n.starts_with('-')).collect();
+        only.is_empty() || only.iter().any(|n| **n == field)
+    }
+}
+
+/// "keys<TAB>expected<TAB>fields" per line ("\n" in the expected text is a line break); lines
+/// starting with "#" are comments.
+fn parse_cases(script: &str) -> Vec<Case> {
+    script
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
+        .filter_map(|line| {
+            let mut columns = line.splitn(3, '\t');
+            let keys = columns.next()?.to_string();
+            let expected = columns.next()?.replace("\\n", "\n");
+            let fields = columns.next().unwrap_or("").trim().to_string();
+            Some(Case { keys, expected, fields })
+        })
+        .collect()
+}
 
 thread_local! {
     /// The text of the `--imm` field: what went in, and the composition shown at its end.
@@ -465,7 +495,7 @@ fn bring_to_front(window: HWND) {
 /// `--browser`: the cases typed into a textarea in Chrome (or Edge), started with a profile of its
 /// own; the page puts what the field holds in its title, where this program reads it. The browser
 /// types with whichever input method is chosen (Win+Space), as any app does.
-fn run_in_browser(cases: &[(String, String)], support: &std::path::Path) -> i32 {
+fn run_in_browser(cases: &[Case], others: &str, support: &std::path::Path) -> i32 {
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
     let candidates = [
         format!("{}\\Google\\Chrome\\Application\\chrome.exe", std::env::var("ProgramFiles").unwrap_or_default()),
@@ -516,7 +546,7 @@ fn run_in_browser(cases: &[(String, String)], support: &std::path::Path) -> i32 
     bring_to_front(window);
     std::thread::sleep(Duration::from_millis(1500));
     let mut failures = 0;
-    for (keys, expected) in cases {
+    for Case { keys, expected, .. } in cases {
         if let Err(e) = type_keys(window, keys) {
             eprintln!("{e}");
             let _ = child.kill();
@@ -541,7 +571,8 @@ fn run_in_browser(cases: &[(String, String)], support: &std::path::Path) -> i32 
         unsafe { SendInput(&[key_input(VK_F9, false), key_input(VK_F9, true)], std::mem::size_of::<INPUT>() as i32) };
         std::thread::sleep(Duration::from_millis(100));
     }
-    println!("{} of {} cases as expected ({})", cases.len() - failures, cases.len(), browser.rsplit('\\').next().unwrap_or(browser));
+    let name = browser.rsplit('\\').next().unwrap_or(browser);
+    println!("{} of {} cases as expected ({name}){others}", cases.len() - failures, cases.len());
     let loaded = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) }
         .ok()
         .and_then(araso_module)
@@ -589,15 +620,25 @@ fn main() {
     let dev = args.iter().any(|a| a == "--dev");
     let (clsid, profile) = if dev { (CLSID_ARASO_DEV, GUID_PROFILE_DEV) } else { (CLSID_ARASO, GUID_PROFILE) };
     let imm = args.iter().any(|a| a == "--imm");
-    let cases: Vec<(String, String)> = match args.iter().find(|a| !a.starts_with("--")) {
-        Some(path) => std::fs::read_to_string(path)
-            .expect("cases file")
-            .lines()
-            .filter_map(|l| l.split_once('\t'))
-            .map(|(k, e)| (k.to_string(), e.replace("\\n", "\n")))
-            .collect(),
-        None => CASES.iter().map(|(k, e)| (k.to_string(), e.to_string())).collect(),
+    let field = if args.iter().any(|a| a == "--browser") {
+        "browser"
+    } else if richedit {
+        "richedit"
+    } else if richedit_imm {
+        "richedit-imm"
+    } else if imm {
+        "imm"
+    } else {
+        "edit"
     };
+    let files: Vec<String> = args
+        .iter()
+        .filter(|a| !a.starts_with("--"))
+        .map(|path| std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}")))
+        .collect();
+    let scripts: Vec<&str> = if files.is_empty() { SCRIPTS.to_vec() } else { files.iter().map(String::as_str).collect() };
+    let (cases, others): (Vec<Case>, Vec<Case>) = scripts.iter().flat_map(|s| parse_cases(s)).partition(|c| c.applies_to(field));
+    let others = if others.is_empty() { String::new() } else { format!(", {} not for this field", others.len()) };
 
     let before = memory();
 
@@ -620,7 +661,7 @@ fn main() {
         finish(4);
     });
     if args.iter().any(|a| a == "--browser") {
-        let code = run_in_browser(&cases, &support);
+        let code = run_in_browser(&cases, &others, &support);
         if log {
             for entry in std::fs::read_dir(support.join("logs")).into_iter().flatten().flatten() {
                 println!("--- {}", entry.file_name().to_string_lossy());
@@ -733,34 +774,32 @@ fn main() {
         }
 
         let mut failures = 0;
-        for (keys, expected) in &cases {
+        for case in &cases {
             let _ = SetWindowTextW(edit, w!(""));
             let _ = SetFocus(Some(edit));
             pump(Duration::from_millis(50));
-            if let Err(e) = type_keys(window, keys) {
+            if let Err(e) = type_keys(window, &case.keys) {
                 eprintln!("{e}");
                 finish(3);
             }
             // What is on screen: the field, and the word in Araso's window after it.
             let got = text_of(edit) + &composition_window_text();
-            let ok = got == *expected;
+            let ok = got == case.expected;
             if !ok {
                 failures += 1;
             }
-            println!("{} {keys:?} → {got:?}{}", if ok { "ok  " } else { "FAIL" }, if ok { String::new() } else { format!(" (expected {expected:?})") });
+            let note = if ok { String::new() } else { format!(" (expected {:?})", case.expected) };
+            println!("{} {:?} → {got:?}{note}", if ok { "ok  " } else { "FAIL" }, case.keys);
             // Return commits anything left composing before the next case.
             let _ = type_keys(window, "⏎");
         }
-        let field = if richedit {
-            "RichEdit, TSF"
-        } else if richedit_imm {
-            "RichEdit, IMM32"
-        } else if imm {
-            "own IMM32 handling"
-        } else {
-            "EDIT, IMM32"
+        let label = match field {
+            "richedit" => "RichEdit, TSF",
+            "richedit-imm" => "RichEdit, IMM32",
+            "imm" => "own IMM32 handling",
+            _ => "EDIT, IMM32",
         };
-        println!("{} of {} cases as expected ({field})", cases.len() - failures, cases.len());
+        println!("{} of {} cases as expected ({label}){others}", cases.len() - failures, cases.len());
         println!(
             "{}-bit test process, typed with {}; loaded: {}",
             std::mem::size_of::<usize>() * 8,

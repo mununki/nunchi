@@ -1,0 +1,13 @@
+# What the field shows in the middle of a word: all of it, not only its first character
+# (Explorer's rename box and KakaoTalk once showed "안" for "dkss" and "a" for "ab").
+d	ㅇ	
+dk	아	
+dks	안	
+dkss	안ㄴ	
+dkssu	안녀	
+ab	ab	
+abc	뮻	
+dkssud 	안녕 	
+dkssud⌫	안녀	
+dkssudgktpdy	안녕하세요	
+hello	hello	
