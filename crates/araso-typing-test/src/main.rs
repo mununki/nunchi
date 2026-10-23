@@ -319,12 +319,32 @@ fn composition_window_text() -> String {
     found
 }
 
+/// The run's own folder in %TEMP%: what Araso keeps (learned words, the log) and, with
+/// `--browser`, the browser's profile.
+static SUPPORT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Ends the test with `code`, leaving nothing in %TEMP%.
+fn finish(code: i32) -> ! {
+    if let Some(support) = SUPPORT.get() {
+        // A browser that just quit can hold its profile a moment longer.
+        for _ in 0..50 {
+            if std::fs::remove_dir_all(support).is_ok() || !support.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    std::process::exit(code);
+}
+
 /// Runs the test again inside an AppContainer, the sandbox Store apps run in: there Araso loads
 /// only if its DLL is readable by all app packages, and can't read %APPDATA%.
 fn run_in_app_container(args: &[String]) -> i32 {
     use windows::core::PWSTR;
     use windows::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
-    use windows::Win32::Security::Isolation::{CreateAppContainerProfile, DeriveAppContainerSidFromAppContainerName};
+    use windows::Win32::Security::Isolation::{
+        CreateAppContainerProfile, DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
+    };
     use windows::Win32::Security::{FreeSid, SECURITY_CAPABILITIES};
     use windows::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE};
     use windows::Win32::System::Threading::*;
@@ -394,6 +414,8 @@ fn run_in_app_container(args: &[String]) -> i32 {
         let _ = GetExitCodeProcess(process.hProcess, &mut code);
         DeleteProcThreadAttributeList(list);
         FreeSid(sid);
+        // The sandbox's profile goes too, its folders with it; the next run makes it again.
+        let _ = DeleteAppContainerProfile(name);
         code as i32
     }
 }
@@ -583,6 +605,7 @@ fn main() {
     // the user's dictionary.
     let support = std::env::temp_dir().join(format!("araso-typing-test-{}", std::process::id()));
     unsafe { std::env::set_var("ARASO_SUPPORT_DIR", &support) };
+    let _ = SUPPORT.set(support.clone());
     // `--log`: Araso's diagnostic log (kinds of keys and contexts, never text), shown at the end.
     let log = args.iter().any(|a| a == "--log");
     if log {
@@ -594,7 +617,7 @@ fn main() {
     std::thread::spawn(|| {
         std::thread::sleep(Duration::from_secs(60));
         eprintln!("timed out");
-        std::process::exit(4);
+        finish(4);
     });
     if args.iter().any(|a| a == "--browser") {
         let code = run_in_browser(&cases, &support);
@@ -604,7 +627,7 @@ fn main() {
                 print!("{}", std::fs::read_to_string(entry.path()).unwrap_or_default());
             }
         }
-        std::process::exit(code);
+        finish(code);
     }
     let step = |s: &str| {
         use std::io::Write;
@@ -699,14 +722,14 @@ fn main() {
             profiles.ActivateProfile(TF_PROFILETYPE_INPUTPROCESSOR, 0x0412, &clsid, &profile, HKL::default(), TF_IPPMF_FORPROCESS)
         {
             eprintln!("Araso could not be activated ({e}); is it registered?");
-            std::process::exit(2);
+            finish(2);
         }
         step("activated");
         pump(Duration::from_millis(1500)); // the models load in the background
         step("typing");
         if GetForegroundWindow() != window {
             eprintln!("the test window didn't get the keyboard focus; nothing was typed");
-            std::process::exit(2);
+            finish(2);
         }
 
         let mut failures = 0;
@@ -716,7 +739,7 @@ fn main() {
             pump(Duration::from_millis(50));
             if let Err(e) = type_keys(window, keys) {
                 eprintln!("{e}");
-                std::process::exit(3);
+                finish(3);
             }
             // What is on screen: the field, and the word in Araso's window after it.
             let got = text_of(edit) + &composition_window_text();
@@ -756,6 +779,6 @@ fn main() {
             }
         }
         let _ = DestroyWindow(window);
-        std::process::exit(if failures > 0 { 1 } else { 0 });
+        finish(if failures > 0 { 1 } else { 0 });
     }
 }
