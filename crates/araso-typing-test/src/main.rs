@@ -349,6 +349,44 @@ fn composition_window_text() -> String {
     found
 }
 
+/// Araso's mode icon in the taskbar's input indicator, as this thread's TSF has it: Araso's, with
+/// an icon, saying "on", and a click pauses Araso and the next resumes it. What its tooltips said.
+fn check_mode_icon(clsid: &GUID) -> Result<String, String> {
+    use windows::core::Interface;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::TextServices::{
+        ITfLangBarItemButton, ITfLangBarItemMgr, ITfThreadMgr, CLSID_TF_ThreadMgr, GUID_LBI_INPUTMODE, TF_LANGBARITEMINFO,
+        TF_LBI_CLK_LEFT,
+    };
+    unsafe {
+        let thread_mgr: ITfThreadMgr =
+            CoCreateInstance(&CLSID_TF_ThreadMgr, None, CLSCTX_INPROC_SERVER).map_err(|e| format!("no TSF ({e})"))?;
+        let items: ITfLangBarItemMgr = thread_mgr.cast().map_err(|e| e.to_string())?;
+        let item = items.GetItem(&GUID_LBI_INPUTMODE).map_err(|e| format!("none ({e})"))?;
+        let mut info = TF_LANGBARITEMINFO::default();
+        item.GetInfo(&mut info).map_err(|e| e.to_string())?;
+        if info.clsidService != *clsid {
+            return Err(format!("another input method's ({:?})", info.clsidService));
+        }
+        let button: ITfLangBarItemButton = item.cast().map_err(|e| e.to_string())?;
+        let icon = button.GetIcon().map_err(|e| format!("no icon ({e})"))?;
+        let _ = DestroyIcon(icon);
+        let tooltip = || button.GetTooltipString().map(|t| t.to_string()).unwrap_or_default();
+        let click = || {
+            let _ = button.OnClick(TF_LBI_CLK_LEFT, POINT::default(), std::ptr::null());
+            pump(Duration::from_millis(50));
+        };
+        let on = tooltip();
+        click();
+        let paused = tooltip();
+        click();
+        let resumed = tooltip();
+        let seen = format!("{on:?} → click → {paused:?} → click → {resumed:?}");
+        let expected = on.contains("켜짐") && paused.contains("일시정지") && resumed.contains("켜짐");
+        if expected { Ok(seen) } else { Err(seen) }
+    }
+}
+
 /// The run's own folder in %TEMP%: what Araso keeps (learned words, the log) and, with
 /// `--browser`, the browser's profile.
 static SUPPORT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
@@ -792,6 +830,13 @@ fn main() {
             println!("{} {:?} → {got:?}{note}", if ok { "ok  " } else { "FAIL" }, case.keys);
             // Return commits anything left composing before the next case.
             let _ = type_keys(window, "⏎");
+        }
+        match check_mode_icon(&clsid) {
+            Ok(seen) => println!("ok   mode icon: {seen}"),
+            Err(e) => {
+                failures += 1;
+                println!("FAIL mode icon: {e}");
+            }
         }
         let label = match field {
             "richedit" => "RichEdit, TSF",

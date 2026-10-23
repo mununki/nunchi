@@ -1,7 +1,8 @@
 ﻿# Rebuilds the development build, "Araso (개발)", 64-bit and 32-bit, and puts each where its
 # registered copy is, without registering again (no UAC). A DLL an app has loaded can't be
 # overwritten but can be renamed: the old one moves aside (apps that loaded it keep it), and apps
-# that load Araso (개발) from now on get the new build. Run scripts\dev-register.ps1 once first.
+# that load Araso (개발) from now on get the new build. The settings window goes beside them.
+# Run scripts\dev-register.ps1 once first.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $build = Join-Path $root 'target\dev'
@@ -11,6 +12,10 @@ cargo build --release -p araso-tsf --features dev --target-dir $build
 $code = $LASTEXITCODE
 if (-not $code) {
     cargo build --release -p araso-tsf --features dev --target-dir $build --target i686-pc-windows-msvc
+    $code = $LASTEXITCODE
+}
+if (-not $code) {
+    cargo build --release -p araso-settings --target-dir $build
     $code = $LASTEXITCODE
 }
 Pop-Location
@@ -38,4 +43,15 @@ foreach ($b in $builds) {
     }
     Copy-Item (Join-Path $build $b.Dll) $registered
     Write-Output "updated $registered"
+}
+
+# The settings window, where the taskbar menu's "설정…" looks for it: beside the input method.
+$registered = (Get-ItemProperty $builds[0].Key -ErrorAction SilentlyContinue).'(default)'
+if ($registered) {
+    $settings = Join-Path (Split-Path $registered) 'araso-settings.exe'
+    if (Test-Path $settings) {
+        Move-Item $settings ("{0}.old-{1}" -f $settings, (Get-Date -Format 'HHmmssfff'))
+    }
+    Copy-Item (Join-Path $build 'release\araso-settings.exe') $settings
+    Write-Output "updated $settings"
 }

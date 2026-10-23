@@ -1,6 +1,10 @@
 #pragma code_page(65001)
 
 1 ICON "araso.ico"
+// The mode icon in the taskbar's input indicator: on (가) and paused or off in the app (가 with a
+// small red x).
+2 ICON "mode-on.ico"
+3 ICON "mode-off.ico"
 
 1 VERSIONINFO
 FILEVERSION 0,1,0,0

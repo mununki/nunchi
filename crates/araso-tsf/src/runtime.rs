@@ -65,6 +65,11 @@ fn load(previous: Option<&Runtime>) -> Runtime {
     Runtime { settings, policies, engine, generation, stamps: stamps() }
 }
 
+/// Has the next `current` look at the files at once (this text service just wrote one).
+pub fn refresh() {
+    SHARED.lock().unwrap_or_else(|e| e.into_inner()).checked = None;
+}
+
 /// The runtime, read again when its files changed since it was last read.
 pub fn current() -> Arc<Runtime> {
     let mut shared = SHARED.lock().unwrap_or_else(|e| e.into_inner());

@@ -14,9 +14,10 @@ use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, VIRTUAL_KEY};
 use windows::Win32::UI::TextServices::*;
-use windows_core::IUnknownImpl;
+use windows_core::{ComObject, IUnknownImpl};
 
 use crate::client::TsfClient;
+use crate::mode_button::{Command, Mode, ModeButton};
 use crate::composition_window::CompositionWindow;
 use crate::edit_field::{self, EditClient, EditWord};
 use crate::display_attribute::{DisplayAttributeInfo, EnumDisplayAttributeInfo};
@@ -59,6 +60,8 @@ struct Inner {
     /// `OnKeyUp` after it.
     pending: Option<Pending>,
     taps: keys::Taps,
+    /// The mode icon in the taskbar's input indicator.
+    mode_button: Option<ComObject<ModeButton>>,
 }
 
 /// A key event handled when TSF asked whether it would be, and the answer.
@@ -103,6 +106,76 @@ impl TextService_Impl {
         session.activate(runtime::app_name().as_deref());
         inner.session = Some(session);
         inner.generation = runtime.generation;
+    }
+
+    /// Shows in the taskbar's input indicator whether Araso is on, paused in the field or off
+    /// in the app.
+    fn update_mode(&self) {
+        let (button, mode) = {
+            let inner = self.inner.borrow();
+            let mode = match inner.session.as_ref() {
+                Some(session) if !session.policy().enabled => Mode::Off,
+                Some(session) if session.paused() => Mode::Paused,
+                _ => Mode::On,
+            };
+            (inner.mode_button.clone(), mode)
+        };
+        if let Some(button) = button {
+            button.set_mode(mode);
+        }
+    }
+
+    /// A click on the mode icon, or its menu.
+    fn command(&self, command: Command) {
+        match command {
+            Command::TogglePause => {
+                let context = self.inner.borrow().thread_mgr.as_ref().and_then(|thread_mgr| unsafe {
+                    thread_mgr.GetFocus().ok().and_then(|document| document.GetTop().ok())
+                });
+                let paused = context.and_then(|context| self.edit(&context, |session, client| session.toggle_pause(Some(client))));
+                // No field to edit in (the click came while it was busy): nothing to commit first.
+                if paused.is_none() {
+                    if let Some(session) = self.inner.borrow_mut().session.as_mut() {
+                        session.toggle_pause(None);
+                    }
+                }
+                crate::log::write("pause from the mode icon");
+            }
+            Command::ToggleApp => {
+                let Some(app) = runtime::app_name() else { return };
+                let url = araso_core::app_policy::store_url();
+                let mut policies = araso_core::AppPolicies::load(url.as_deref());
+                let mut policy = policies.policy(Some(&app));
+                policy.enabled = !policy.enabled;
+                policies.set(&policy, &app);
+                // A sandboxed app (Store apps) can't write the user's files: nothing changes.
+                if let Err(e) = policies.save(url.as_deref()) {
+                    crate::log::write(&format!("apps.json not saved: {e}"));
+                }
+                if self.inner.borrow().composition_context.is_some() {
+                    self.commit_composition(false);
+                }
+                runtime::refresh();
+                self.ensure_session();
+            }
+            Command::OpenSettings => {
+                // The settings window ships beside the input method (the 32-bit one is a folder
+                // down, in x86); without it, the folder its files are in.
+                let settings = runtime::module_dir().and_then(|dir| {
+                    [dir.join("araso-settings.exe"), dir.join("..").join("araso-settings.exe")]
+                        .into_iter()
+                        .find(|path| path.exists())
+                });
+                let opened = settings.is_some_and(|exe| std::process::Command::new(exe).spawn().is_ok());
+                if !opened {
+                    if let Some(dir) = araso_core::support_dir::url() {
+                        let _ = std::fs::create_dir_all(&dir);
+                        let _ = std::process::Command::new("explorer.exe").arg(&dir).spawn();
+                    }
+                }
+            }
+        }
+        self.update_mode();
     }
 
     /// Runs `op` on the session with a client for `context`, in a synchronous read-write edit
@@ -251,6 +324,7 @@ impl TextService_Impl {
                 eaten
             }
         };
+        self.update_mode();
         eaten
     }
 
@@ -272,6 +346,7 @@ impl TextService_Impl {
         if keys::pause_tap(tap, pause) {
             self.edit(context, |session, client| session.toggle_pause(Some(client)));
             crate::log::write("pause tap");
+            self.update_mode();
             return false;
         }
         if switch && !vim {
@@ -297,12 +372,16 @@ impl TextService_Impl {
             self.commit_composition(true);
         }
         self.ensure_session();
-        let mut inner = self.inner.borrow_mut();
-        inner.window.hide(); // the word went into the field it was for, if that still could be
-        inner.edit_word = None;
-        if let Some(session) = inner.session.as_mut() {
-            session.activate(runtime::app_name().as_deref());
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.window.hide(); // the word went into the field it was for, if that still could be
+            inner.edit_word = None;
+            if let Some(session) = inner.session.as_mut() {
+                session.activate(runtime::app_name().as_deref());
+            }
         }
+        // A pause lasts in its field only; another app may be off.
+        self.update_mode();
     }
 }
 
@@ -320,8 +399,13 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
                 let mut inner = self.inner.borrow_mut();
                 (inner.thread_mgr.take(), inner.thread_mgr_cookie.take(), inner.client_id)
             };
+            let button = self.inner.borrow_mut().mode_button.take();
             if let Some(thread_mgr) = thread_mgr {
                 unsafe {
+                    if let (Some(button), Ok(items)) = (&button, thread_mgr.cast::<ITfLangBarItemMgr>()) {
+                        let item: ITfLangBarItem = button.to_interface();
+                        let _ = items.RemoveItem(&item);
+                    }
                     if let Ok(keystrokes) = thread_mgr.cast::<ITfKeystrokeMgr>() {
                         let _ = keystrokes.UnadviseKeyEventSink(client_id);
                     }
@@ -329,6 +413,10 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
                         let _ = source.UnadviseSink(cookie);
                     }
                 }
+            }
+            // The icon held the service (its clicks come here): let go, both ways.
+            if let Some(button) = button {
+                button.set_handler(None);
             }
             let mut inner = self.inner.borrow_mut();
             inner.session = None;
@@ -343,7 +431,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
 }
 
 impl ITfTextInputProcessorEx_Impl for TextService_Impl {
-    fn ActivateEx(&self, thread_mgr: Ref<ITfThreadMgr>, client_id: u32, _flags: u32) -> Result<()> {
+    fn ActivateEx(&self, thread_mgr: Ref<ITfThreadMgr>, client_id: u32, flags: u32) -> Result<()> {
         crate::guard(|| {
             let thread_mgr = thread_mgr.ok()?.clone();
             runtime::preload();
@@ -371,6 +459,20 @@ impl ITfTextInputProcessorEx_Impl for TextService_Impl {
                 }
             }
             self.ensure_session();
+
+            // The mode icon in the taskbar's input indicator; its clicks come to `command`.
+            let button = ComObject::new(ModeButton::new(flags & TF_TMAE_SECUREMODE != 0));
+            let this = self.to_object();
+            button.set_handler(Some(Box::new(move |command| this.command(command))));
+            if let Ok(items) = thread_mgr.cast::<ITfLangBarItemMgr>() {
+                let item: ITfLangBarItem = button.to_interface();
+                if let Err(e) = unsafe { items.AddItem(&item) } {
+                    crate::log::write(&format!("mode icon not added: {e}"));
+                }
+            }
+            self.inner.borrow_mut().mode_button = Some(button);
+            self.update_mode();
+
             crate::log::write(&format!("activated, client {client_id}"));
             Ok(())
         })

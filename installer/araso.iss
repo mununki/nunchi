@@ -60,9 +60,14 @@ Type: files; Name: "{app}\x86\*.old-*"
 [Files]
 Source: "{#Root}\target\release\araso_tsf.dll"; DestDir: "{app}"; Flags: ignoreversion regserver 64bit uninsrestartdelete
 Source: "{#Root}\target\i686-pc-windows-msvc\release\araso_tsf.dll"; DestDir: "{app}\x86"; Flags: ignoreversion regserver 32bit uninsrestartdelete
+; The settings window, beside the input method: the taskbar icon's menu opens it from there.
+Source: "{#Root}\target\release\araso-settings.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"
 Source: "{#Root}\THIRD-PARTY.md"; DestDir: "{app}"; DestName: "THIRD-PARTY.txt"
 Source: "{#Root}\data\licenses\*"; DestDir: "{app}\licenses"
+
+[Icons]
+Name: "{autoprograms}\Araso 설정"; Filename: "{app}\araso-settings.exe"
 
 [Run]
 Filename: "{sys}\rundll32.exe"; Parameters: """{app}\araso_tsf.dll"",AddToKeyboardList default"; Flags: runasoriginaluser runhidden waituntilterminated; Tasks: defaultime

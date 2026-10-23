@@ -46,6 +46,10 @@ if (-not $NoBuild) {
         cargo build --release -p araso-tsf --features dev --target-dir $build --target i686-pc-windows-msvc
         $code = $LASTEXITCODE
     }
+    if (-not $code) {
+        cargo build --release -p araso-settings --target-dir $build
+        $code = $LASTEXITCODE
+    }
     Pop-Location
     if ($code) { throw 'build failed (32-bit needs: rustup target add i686-pc-windows-msvc)' }
 }
@@ -60,6 +64,11 @@ $copy64 = Join-Path $dir "araso_dev-$stamp.dll"
 $copy32 = Join-Path $dir "araso_dev-x86-$stamp.dll"
 Copy-Item (Join-Path $build 'release\araso_tsf.dll') $copy64
 Copy-Item (Join-Path $build 'i686-pc-windows-msvc\release\araso_tsf.dll') $copy32
+# The settings window, beside them: the taskbar menu's "설정…" opens it from there.
+$settings = Join-Path $dir 'araso-settings.exe'
+Get-ChildItem $dir -Filter 'araso-settings.exe.old-*' | ForEach-Object { Remove-Item $_.FullName -ErrorAction SilentlyContinue }
+if (Test-Path $settings) { Move-Item $settings ("{0}.old-{1}" -f $settings, (Get-Date -Format 'HHmmssfff')) }
+Copy-Item (Join-Path $build 'release\araso-settings.exe') $settings
 Invoke-Elevated @("& '$regsvr64' /s '$copy64'", "& '$regsvr32' /s '$copy32'")
 # The keyboard list is yours: changed as you, not as the administrator.
 & $rundll "$copy64,AddToKeyboardList"

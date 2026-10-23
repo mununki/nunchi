@@ -14,6 +14,7 @@ mod edit_session;
 mod keyboard_list;
 mod keys;
 mod log;
+mod mode_button;
 mod register;
 mod runtime;
 mod text_service;

@@ -28,6 +28,8 @@ try {
     if ($LASTEXITCODE) { throw 'build failed (64-bit)' }
     cargo build --release -p araso-tsf --target i686-pc-windows-msvc
     if ($LASTEXITCODE) { throw 'build failed (32-bit)' }
+    cargo build --release -p araso-settings
+    if ($LASTEXITCODE) { throw 'build failed (settings)' }
     & $Iscc /Qp "/DAppVersion=$version" (Join-Path $root 'installer\araso.iss')
     if ($LASTEXITCODE) { throw 'installer build failed' }
 } finally {

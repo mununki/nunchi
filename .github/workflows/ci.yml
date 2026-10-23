@@ -23,12 +23,13 @@ jobs:
       # The core's tests, and the input method typing the cases in crates\araso-typing-test\cases
       # into real EDIT and RichEdit controls (no keyboard).
       - name: Test
-        run: cargo test --release -p araso-core -p araso-tsf
+        run: cargo test --release -p araso-core -p araso-tsf -p araso-settings
 
-      - name: Build (64-bit and 32-bit)
+      - name: Build (64-bit and 32-bit, and the settings window)
         run: |
           cargo build --release -p araso-tsf
           cargo build --release -p araso-tsf --target i686-pc-windows-msvc
+          cargo build --release -p araso-settings
 
       - name: Inno Setup
         if: startsWith(github.ref, 'refs/tags/v')

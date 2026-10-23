@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/araso-core", "crates/araso-cli", "crates/araso-tsf", "crates/araso-typing-test"]
+members = ["crates/araso-core", "crates/araso-cli", "crates/araso-tsf", "crates/araso-settings", "crates/araso-typing-test"]
 
 [workspace.package]
 version = "0.1.0"
