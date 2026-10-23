@@ -81,7 +81,7 @@ fn create_key(path: &str) -> Result<HKEY> {
 
 fn register_class(dll: &str) -> Result<()> {
     let class = create_key(&clsid_key())?;
-    let result = set_string(class, PCWSTR::null(), "Araso");
+    let result = set_string(class, PCWSTR::null(), crate::NAME);
     unsafe {
         let _ = RegCloseKey(class);
     }
@@ -101,7 +101,7 @@ pub fn register() -> Result<()> {
     unsafe {
         let profiles: ITfInputProcessorProfileMgr =
             CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)?;
-        let description: Vec<u16> = "Araso".encode_utf16().collect();
+        let description: Vec<u16> = crate::NAME.encode_utf16().collect();
         let icon: Vec<u16> = dll.encode_utf16().collect();
         profiles.RegisterProfile(
             &CLSID_ARASO,

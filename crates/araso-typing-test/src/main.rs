@@ -5,6 +5,8 @@
 //!   araso-typing-test                 the built-in cases
 //!   araso-typing-test cases.tsv       "keys<TAB>expected" per line
 //!   araso-typing-test --richedit      a RichEdit (TSF-aware) control instead of a plain EDIT (CUAS)
+//!   araso-typing-test --imm           a field that does its own IMM32 handling (Qt, Java, games)
+//!   araso-typing-test --dev           the development build, "Araso (개발)", not the installed Araso
 //!
 //! In the keys: "⎋" Esc, "⇧" Shift+Esc, "⏎" Return, "⌫" Backspace, "⇥" Tab.
 //! It takes the keyboard focus for a few seconds; it stops at once if its window loses it, so
@@ -22,8 +24,12 @@ use windows::Win32::UI::TextServices::{
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+/// The installed Araso's class and profile, and those of the development build ("Araso (개발)",
+/// `--dev`), as crates/araso-tsf/src/lib.rs has them.
 const CLSID_ARASO: GUID = GUID::from_u128(0xae988ccd_6a62_424c_a948_91d4d3b4c13a);
 const GUID_PROFILE: GUID = GUID::from_u128(0xc37c500f_1136_464d_bc89_601a354fc632);
+const CLSID_ARASO_DEV: GUID = GUID::from_u128(0xaeca5114_3633_4707_bc7d_67ca80de068c);
+const GUID_PROFILE_DEV: GUID = GUID::from_u128(0x71fe9eda_947f_4439_818b_bdd4d8c0af97);
 
 const CASES: &[(&str, &str)] = &[
     ("dkssudgktpdy hello ", "안녕하세요 hello "),
@@ -224,7 +230,7 @@ fn memory() -> (usize, usize) {
     (counters.PrivateUsage / 1024, counters.WorkingSetSize / 1024)
 }
 
-/// The Araso DLL loaded in this process, and the machine it's built for.
+/// The Araso DLLs loaded in this process (the installed one and the development build may both be).
 fn araso_module() -> Option<String> {
     use windows::Win32::Foundation::HMODULE;
     use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
@@ -237,13 +243,29 @@ fn araso_module() -> Option<String> {
             .ok()?;
     }
     let count = (needed as usize / std::mem::size_of::<HMODULE>()).min(modules.len());
-    modules[..count].iter().find_map(|&module| {
-        let mut buffer = [0u16; 1024];
-        let n = unsafe { GetModuleFileNameW(Some(module), &mut buffer) } as usize;
-        let path = String::from_utf16_lossy(&buffer[..n]);
-        let name = path.rsplit('\\').next().unwrap_or_default().to_lowercase();
-        name.starts_with("araso_tsf").then_some(path)
-    })
+    let paths: Vec<String> = modules[..count]
+        .iter()
+        .filter_map(|&module| {
+            let mut buffer = [0u16; 1024];
+            let n = unsafe { GetModuleFileNameW(Some(module), &mut buffer) } as usize;
+            let path = String::from_utf16_lossy(&buffer[..n]);
+            let name = path.rsplit('\\').next().unwrap_or_default().to_lowercase();
+            (name.starts_with("araso_tsf") || name.starts_with("araso_dev")).then_some(path)
+        })
+        .collect();
+    (!paths.is_empty()).then(|| paths.join(", "))
+}
+
+/// The keyboard input method TSF has active in this thread, by name.
+fn active_profile(profiles: &ITfInputProcessorProfileMgr) -> String {
+    use windows::Win32::UI::TextServices::{GUID_TFCAT_TIP_KEYBOARD, TF_INPUTPROCESSORPROFILE};
+    let mut profile = TF_INPUTPROCESSORPROFILE::default();
+    match unsafe { profiles.GetActiveProfile(&GUID_TFCAT_TIP_KEYBOARD, &mut profile) } {
+        Ok(()) if profile.clsid == CLSID_ARASO => "Araso (installed)".into(),
+        Ok(()) if profile.clsid == CLSID_ARASO_DEV => "Araso (개발)".into(),
+        Ok(()) => format!("another input method {:?}", profile.clsid),
+        Err(e) => format!("unknown ({e})"),
+    }
 }
 
 fn text_of(edit: HWND) -> String {
@@ -258,6 +280,8 @@ fn text_of(edit: HWND) -> String {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let richedit = args.iter().any(|a| a == "--richedit");
+    let dev = args.iter().any(|a| a == "--dev");
+    let (clsid, profile) = if dev { (CLSID_ARASO_DEV, GUID_PROFILE_DEV) } else { (CLSID_ARASO, GUID_PROFILE) };
     let imm = args.iter().any(|a| a == "--imm");
     let cases: Vec<(String, String)> = match args.iter().find(|a| !a.starts_with("--")) {
         Some(path) => std::fs::read_to_string(path)
@@ -372,7 +396,7 @@ fn main() {
 
         step("activating Araso");
         if let Err(e) =
-            profiles.ActivateProfile(TF_PROFILETYPE_INPUTPROCESSOR, 0x0412, &CLSID_ARASO, &GUID_PROFILE, HKL::default(), TF_IPPMF_FORPROCESS)
+            profiles.ActivateProfile(TF_PROFILETYPE_INPUTPROCESSOR, 0x0412, &clsid, &profile, HKL::default(), TF_IPPMF_FORPROCESS)
         {
             eprintln!("Araso could not be activated ({e}); is it registered?");
             std::process::exit(2);
@@ -413,9 +437,10 @@ fn main() {
         };
         println!("{} of {} cases as expected ({field})", cases.len() - failures, cases.len());
         println!(
-            "{}-bit test process, Araso from {}",
+            "{}-bit test process, typed with {}; loaded: {}",
             std::mem::size_of::<usize>() * 8,
-            araso_module().unwrap_or_else(|| "nowhere (not loaded)".into())
+            active_profile(&profiles),
+            araso_module().unwrap_or_else(|| "no Araso DLL".into())
         );
         let after = memory();
         println!(

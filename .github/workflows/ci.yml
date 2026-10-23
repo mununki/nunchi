@@ -1,0 +1,49 @@
+# Tests and builds both input methods (64-bit and 32-bit) on every push and pull request; on a
+# version tag (v0.1.0) also builds the installer and attaches it to a GitHub release.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust targets
+        run: rustup target add i686-pc-windows-msvc
+
+      - name: Test
+        run: cargo test --release -p araso-core
+
+      - name: Build (64-bit and 32-bit)
+        run: |
+          cargo build --release -p araso-tsf
+          cargo build --release -p araso-tsf --target i686-pc-windows-msvc
+
+      - name: Inno Setup
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+
+      - name: Installer
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: powershell
+        run: scripts\build-installer.ps1
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $setup = Get-ChildItem target\installer\Araso-Setup-*.exe | Select-Object -First 1
+          gh release create "${{ github.ref_name }}" $setup.FullName --title "Araso ${{ github.ref_name }}" --generate-notes

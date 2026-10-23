@@ -1,4 +1,4 @@
-# Shows which key Windows sees for each key press, in a small window: the virtual key and, for
+﻿# Shows which key Windows sees for each key press, in a small window: the virtual key and, for
 # Shift, Ctrl, Alt and the Windows key, which side. For finding out what a key without a keycap
 # (한/영, 한자) or a Mac keyboard's ⌘/⌥ sends. Close the window to stop.
 #

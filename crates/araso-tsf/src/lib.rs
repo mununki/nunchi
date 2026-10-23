@@ -9,6 +9,7 @@ mod class_factory;
 mod client;
 mod display_attribute;
 mod edit_session;
+mod keyboard_list;
 mod keys;
 mod log;
 mod register;
@@ -25,12 +26,29 @@ use windows::Win32::Foundation::{
 use windows::Win32::System::Com::IClassFactory;
 use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 
+// A development build (`--features dev`) is another input method beside the installed one: its
+// own class, profile and name, so registering it never touches the installed Araso.
+
 /// The text service's COM class.
+#[cfg(not(feature = "dev"))]
 pub const CLSID_ARASO: GUID = GUID::from_u128(0xae988ccd_6a62_424c_a948_91d4d3b4c13a);
+#[cfg(feature = "dev")]
+pub const CLSID_ARASO: GUID = GUID::from_u128(0xaeca5114_3633_4707_bc7d_67ca80de068c);
 /// Its one profile, under Korean.
+#[cfg(not(feature = "dev"))]
 pub const GUID_PROFILE: GUID = GUID::from_u128(0xc37c500f_1136_464d_bc89_601a354fc632);
+#[cfg(feature = "dev")]
+pub const GUID_PROFILE: GUID = GUID::from_u128(0x71fe9eda_947f_4439_818b_bdd4d8c0af97);
 /// The underline of the word being typed.
+#[cfg(not(feature = "dev"))]
 pub const GUID_DISPLAY_ATTRIBUTE_INPUT: GUID = GUID::from_u128(0x79b7faca_ddcb_4f9a_86ae_2fdd4f6e655f);
+#[cfg(feature = "dev")]
+pub const GUID_DISPLAY_ATTRIBUTE_INPUT: GUID = GUID::from_u128(0x12340763_1d70_4f1b_bc06_9f2336432c94);
+/// The name in the keyboard list and the input switcher.
+#[cfg(not(feature = "dev"))]
+pub const NAME: &str = "Araso";
+#[cfg(feature = "dev")]
+pub const NAME: &str = "Araso (개발)";
 /// The 한/영 key, kept for Araso (switches the word's reading).
 pub const GUID_PRESERVED_HANGUL: GUID = GUID::from_u128(0x73d8d15a_c3dd_4499_91b1_c1b7797c32be);
 /// The 한자 key, kept for Araso (pauses it in the text field).

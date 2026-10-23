@@ -9,6 +9,10 @@ license.workspace = true
 name = "araso_tsf"
 crate-type = ["cdylib"]
 
+[features]
+# A development build: its own class, profile and name ("Araso (개발)"), beside the installed one.
+dev = []
+
 [dependencies]
 araso-core = { path = "../araso-core" }
 windows-core = "0.62"
