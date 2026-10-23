@@ -126,12 +126,12 @@ impl TextService_Impl {
             let imm32 = crate::client::is_imm32(&session_context);
             // An EDIT or RichEdit control behind the compatibility layer takes the word itself: the
             // one it is being typed in, or the focused one.
-            let field = match edit_word {
+            let field = match &edit_word {
                 Some(word) => Some(word.field),
                 None if imm32 => edit_field::focused(),
                 None => None,
             };
-            let mut word = edit_word.map(|w| w.range);
+            let mut word = edit_word.map(|w| w.word);
             let r = match field {
                 Some(field) => op(&mut session, &mut EditClient { field, word: &mut word }),
                 None => {
@@ -148,7 +148,7 @@ impl TextService_Impl {
                 }
             };
             let mut inner = this.inner.borrow_mut();
-            inner.edit_word = field.zip(word).map(|(field, range)| EditWord { field, range });
+            inner.edit_word = field.zip(word).map(|(field, word)| EditWord { field, word });
             let composing = composition.is_some() || window.is_visible() || inner.edit_word.is_some();
             inner.composition_context = composing.then(|| session_context.clone());
             inner.composition = composition;
@@ -196,13 +196,18 @@ impl TextService_Impl {
     /// control: the word stays as it is, and the next key starts a new one, as when an app ends a
     /// composition.
     fn check_edit_word(&self) {
+        let word = {
+            let inner = self.inner.borrow();
+            let Some(word) = inner.edit_word.clone() else { return };
+            let caret = TextRange::new(word.word.range.end(), 0);
+            if unsafe { GetFocus() } == word.field.hwnd && edit_field::selection(word.field.hwnd) == Some(caret) {
+                return;
+            }
+            word
+        };
+        // The control hears of it, and its app may answer: nothing of ours is borrowed meanwhile.
+        edit_field::settle(word);
         let mut inner = self.inner.borrow_mut();
-        let Some(word) = inner.edit_word else { return };
-        let caret = TextRange::new(word.range.end(), 0);
-        if unsafe { GetFocus() } == word.field.hwnd && edit_field::selection(word.field.hwnd) == Some(caret) {
-            return;
-        }
-        edit_field::underline(&word, false);
         inner.edit_word = None;
         inner.composition_context = None;
         if let Some(session) = inner.session.as_mut() {

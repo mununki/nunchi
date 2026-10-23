@@ -12,7 +12,8 @@
 //!   araso-typing-test --log           with Araso's diagnostic log at the end
 //!   araso-typing-test --browser       into a textarea in Chrome (or Edge), with the input method chosen there
 //!
-//! In the keys: "⎋" Esc, "⇧" Shift+Esc, "⏎" Return, "⌫" Backspace, "⇥" Tab.
+//! In the keys: "⎋" Esc, "⇧" Shift+Esc, "⏎" Return, "⌫" Backspace, "⇥" Tab, "↶" Ctrl+Z, "⇤" the caret
+//! to the start of the field (as a click there).
 //! It takes the keyboard focus for a few seconds; it stops at once if its window loses it, so
 //! no key goes anywhere else.
 
@@ -202,8 +203,24 @@ fn type_keys(window: HWND, keys: &str) -> Result<(), String> {
         if unsafe { GetForegroundWindow() } != window {
             return Err("the test window lost the keyboard focus; stopped".into());
         }
-        let Some((vk, shift)) = key_for(ch) else { return Err(format!("no key for {ch:?}")) };
+        if ch == '⇤' {
+            // The caret to the start of the field, as a click there puts it.
+            const EM_SETSEL: u32 = 0x00B1;
+            unsafe { SendMessageW(GetFocus(), EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(0))) };
+            pump(Duration::from_millis(15));
+            continue;
+        }
+        let (vk, shift, control) = match ch {
+            '↶' => (VIRTUAL_KEY(b'Z' as u16), false, true),
+            _ => match key_for(ch) {
+                Some((vk, shift)) => (vk, shift, false),
+                None => return Err(format!("no key for {ch:?}")),
+            },
+        };
         let mut inputs = Vec::new();
+        if control {
+            inputs.push(key_input(VK_LCONTROL, false));
+        }
         if shift {
             inputs.push(key_input(VK_LSHIFT, false));
         }
@@ -211,6 +228,9 @@ fn type_keys(window: HWND, keys: &str) -> Result<(), String> {
         inputs.push(key_input(vk, true));
         if shift {
             inputs.push(key_input(VK_LSHIFT, true));
+        }
+        if control {
+            inputs.push(key_input(VK_LCONTROL, true));
         }
         unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
         pump(Duration::from_millis(15));

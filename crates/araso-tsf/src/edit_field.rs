@@ -44,11 +44,22 @@ pub struct Field {
     pub kind: Kind,
 }
 
-/// The word being typed in a control, and where it is in the control's text.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// The word being typed in a control: where it is in the control's text, and what it took the
+/// place of. Ctrl+Z takes a whole word back, as typing it: not the changes on the way.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Word {
+    pub range: TextRange,
+    /// The text the word was typed over (the selection, or a committed word being switched). An
+    /// EDIT control keeps one undo step: the changes on the way aren't recorded, and the word goes
+    /// in as one replacement of this when it ends.
+    pub original: String,
+}
+
+/// The word being typed in a control, kept between keys.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct EditWord {
     pub field: Field,
-    pub range: TextRange,
+    pub word: Word,
 }
 
 /// The focused control when it is an EDIT or RichEdit (or one built on them) whose text is
@@ -76,12 +87,11 @@ pub fn focused() -> Option<Field> {
 /// IME marks what it composes: RichEdit's temporary formatting, shown but not part of the text
 /// (not saved, not undone, not read back). An EDIT control has no formatting: there the word
 /// shows as typed.
-pub fn underline(word: &EditWord, on: bool) {
-    if word.field.kind != Kind::RichEdit {
+fn underline(field: Field, range: TextRange, on: bool) {
+    if field.kind != Kind::RichEdit {
         return;
     }
-    let range = word.range;
-    let result = document(word.field.hwnd).and_then(|document| unsafe {
+    let result = document(field.hwnd).and_then(|document| unsafe {
         let font = document.Range(range.location as i32, range.end() as i32)?.GetFont()?;
         font.Reset(tomApplyTmp)?;
         font.SetUnderline(if on { tomSingle.0 } else { tomNone.0 })?;
@@ -90,6 +100,40 @@ pub fn underline(word: &EditWord, on: bool) {
     if let Err(e) = result {
         crate::log::write(&format!("underline in the rich edit control failed: {e}"));
     }
+}
+
+/// Starts (or ends) one undo step for a word in a RichEdit control: every change in between, the
+/// app's own too (KakaoTalk taking its placeholder away), is undone together.
+fn group(field: Field, start: bool) {
+    let result = document(field.hwnd).and_then(|document| unsafe {
+        if start {
+            document.BeginEditCollection()
+        } else {
+            document.EndEditCollection()
+        }
+    });
+    if let Err(e) = result {
+        crate::log::write(&format!("undo step in the rich edit control failed: {e}"));
+    }
+}
+
+/// The caret left the word (a click): the word stays as it is and becomes one undo step, as a
+/// committed word does, and its underline goes. The caret stays where it was put.
+pub fn settle(word: EditWord) {
+    let field = word.field;
+    let caret = selection(field.hwnd);
+    let mut slot = Some(word.word);
+    let mut client = EditClient { field, word: &mut slot };
+    client.quietly(|client| {
+        client.unmark();
+        if let Some(word) = client.word.take() {
+            let text = client.text_in(word.range).unwrap_or_default();
+            client.finish(word, &text);
+        }
+        if let Some(caret) = caret {
+            unsafe { SendMessageW(field.hwnd, EM_SETSEL, Some(WPARAM(caret.location)), Some(LPARAM(caret.end() as isize))) };
+        }
+    });
 }
 
 /// A RichEdit control's text object model.
@@ -117,20 +161,39 @@ pub fn selection(hwnd: HWND) -> Option<TextRange> {
 /// kept between keys.
 pub struct EditClient<'a> {
     pub field: Field,
-    pub word: &'a mut Option<TextRange>,
+    pub word: &'a mut Option<Word>,
 }
 
 impl EditClient<'_> {
     /// Puts `text` in place of `range`; the caret goes after it. It goes in as typing does, through
     /// the control's messages: the app hears of it (KakaoTalk clears its placeholder, text it
-    /// keeps in the field, only then).
-    fn replace(&self, range: TextRange, text: &str) {
+    /// keeps in the field, only then). `undoable`: recorded for Ctrl+Z.
+    fn replace(&self, range: TextRange, text: &str, undoable: bool) {
         let hwnd = self.field.hwnd;
         let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
         unsafe {
             SendMessageW(hwnd, EM_SETSEL, Some(WPARAM(range.location)), Some(LPARAM(range.end() as isize)));
-            // Undoable, as typing is.
-            SendMessageW(hwnd, EM_REPLACESEL, Some(WPARAM(1)), Some(LPARAM(PCWSTR(wide.as_ptr()).0 as isize)));
+            let text = LPARAM(PCWSTR(wide.as_ptr()).0 as isize);
+            SendMessageW(hwnd, EM_REPLACESEL, Some(WPARAM(undoable as usize)), Some(text));
+        }
+    }
+
+    /// The word ends as `text`, one undo step from what it was typed over.
+    fn finish(&mut self, word: Word, text: &str) {
+        match self.field.kind {
+            Kind::RichEdit => {
+                if self.text_in(word.range).as_deref() != Some(text) {
+                    self.replace(word.range, text, true);
+                }
+                group(self.field, false);
+            }
+            Kind::Edit => {
+                // Back to what it was typed over, unrecorded, then the word in one recorded step.
+                self.replace(word.range, &word.original, false);
+                if !(word.original.is_empty() && text.is_empty()) {
+                    self.replace(TextRange::new(word.range.location, utf16_len(&word.original)), text, true);
+                }
+            }
         }
     }
 
@@ -171,24 +234,53 @@ impl EditClient<'_> {
 
     /// The word if there is one, else the selection.
     fn target(&mut self) -> TextRange {
-        self.word.or_else(|| selection(self.field.hwnd)).unwrap_or(TextRange::new(0, 0))
+        self.word.as_ref().map(|w| w.range).or_else(|| selection(self.field.hwnd)).unwrap_or(TextRange::new(0, 0))
     }
 
     /// The word, `text` in place of `range`, underlined as it changes.
     fn mark(&mut self, range: TextRange, text: &str) {
+        if self.word.is_none() && text.is_empty() && range.length == 0 {
+            return;
+        }
         self.quietly(|client| {
             client.unmark();
-            client.replace(range, text);
-            *client.word = (!text.is_empty()).then(|| TextRange::new(range.location, utf16_len(text)));
-            if let Some(range) = *client.word {
-                underline(&EditWord { field: client.field, range }, true);
+            let mut word = match client.word.take() {
+                Some(mut word) => {
+                    // Committed text the word now takes in (a word being switched back) was there
+                    // before it, as what it was typed over was.
+                    let before = TextRange::new(range.location, word.range.location.saturating_sub(range.location));
+                    let after = TextRange::new(word.range.end(), range.end().saturating_sub(word.range.end()));
+                    if before.length > 0 {
+                        word.original = client.text_in(before).unwrap_or_default() + &word.original;
+                    }
+                    if after.length > 0 {
+                        word.original += &client.text_in(after).unwrap_or_default();
+                    }
+                    word
+                }
+                None => {
+                    if client.field.kind == Kind::RichEdit {
+                        group(client.field, true);
+                    }
+                    Word { range, original: client.text_in(range).unwrap_or_default() }
+                }
+            };
+            // A RichEdit control records the changes inside the word's undo step; an EDIT control
+            // records the word only when it ends.
+            client.replace(range, text, client.field.kind == Kind::RichEdit);
+            word.range = TextRange::new(range.location, utf16_len(text));
+            if text.is_empty() {
+                client.finish(word, "");
+            } else {
+                underline(client.field, word.range, true);
+                *client.word = Some(word);
             }
         });
     }
 
     fn unmark(&self) {
-        if let Some(range) = *self.word {
-            underline(&EditWord { field: self.field, range }, false);
+        if let Some(word) = self.word.as_ref() {
+            underline(self.field, word.range, false);
         }
     }
 }
@@ -200,19 +292,28 @@ impl TextClient for EditClient<'_> {
     }
 
     fn set_marked_text_replacing(&mut self, text: &str, range: TextRange) {
-        let end = self.word.map_or(range.end(), |w| w.end().max(range.end()));
+        let end = self.word.as_ref().map_or(range.end(), |w| w.range.end().max(range.end()));
         self.mark(TextRange::new(range.location, end.saturating_sub(range.location)), text);
     }
 
     fn insert_text(&mut self, text: &str, range: Option<TextRange>) {
-        let range = match range {
-            Some(range) => range,
-            None => self.target(),
-        };
         self.quietly(|client| {
             client.unmark();
-            client.replace(range, text);
-            *client.word = None;
+            match (range, client.word.take()) {
+                (None, Some(word)) => client.finish(word, text),
+                (None, None) => {
+                    let range = client.target();
+                    client.replace(range, text, true);
+                }
+                (Some(range), word) => {
+                    // A committed word changed in place; a word being typed, if any, goes in first.
+                    if let Some(word) = word {
+                        let current = client.text_in(word.range).unwrap_or_default();
+                        client.finish(word, &current);
+                    }
+                    client.replace(range, text, true);
+                }
+            }
         });
     }
 
@@ -221,7 +322,7 @@ impl TextClient for EditClient<'_> {
     }
 
     fn marked_range(&mut self) -> Option<TextRange> {
-        *self.word
+        self.word.as_ref().map(|w| w.range)
     }
 
     fn text_in(&mut self, range: TextRange) -> Option<String> {
