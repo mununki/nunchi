@@ -17,6 +17,7 @@ use windows::Win32::UI::TextServices::*;
 use windows_core::IUnknownImpl;
 
 use crate::client::TsfClient;
+use crate::composition_window::CompositionWindow;
 use crate::display_attribute::{DisplayAttributeInfo, EnumDisplayAttributeInfo};
 use crate::edit_session::EditSession;
 use crate::keys::{self, Action};
@@ -42,8 +43,9 @@ struct Inner {
     client_id: u32,
     thread_mgr_cookie: Option<u32>,
     composition: Option<ITfComposition>,
-    /// The context the composition is in.
+    /// The context the composition is in, or the one the composition window's word is for.
     composition_context: Option<ITfContext>,
+    window: CompositionWindow,
     session: Option<InputSession>,
     generation: u64,
     atom: u32,
@@ -109,19 +111,27 @@ impl TextService_Impl {
         let out = result.clone();
         let session_context = context.clone();
         let body = EditSession::new(move |ec| {
-            let (mut session, mut composition, atom) = {
+            let (mut session, mut composition, mut window, atom) = {
                 let mut inner = this.inner.borrow_mut();
                 let Some(session) = inner.session.take() else { return Ok(()) };
-                (session, inner.composition.take(), inner.atom)
+                (session, inner.composition.take(), std::mem::take(&mut inner.window), inner.atom)
             };
             let sink: ITfCompositionSink = this.to_interface();
             let transitory = crate::client::is_transitory(&session_context);
-            let mut client =
-                TsfClient { ec, context: &session_context, composition: &mut composition, sink: &sink, atom, transitory };
+            let mut client = TsfClient {
+                ec,
+                context: &session_context,
+                composition: &mut composition,
+                sink: &sink,
+                atom,
+                window: transitory.then_some(&mut window),
+            };
             let r = op(&mut session, &mut client);
             let mut inner = this.inner.borrow_mut();
-            inner.composition_context = composition.as_ref().map(|_| session_context.clone());
+            let composing = composition.is_some() || window.is_visible();
+            inner.composition_context = composing.then(|| session_context.clone());
             inner.composition = composition;
+            inner.window = window;
             inner.session = Some(session);
             *out.borrow_mut() = Some(r);
             Ok(())
@@ -233,11 +243,12 @@ impl TextService_Impl {
     }
 
     fn focus_changed(&self) {
-        if self.inner.borrow().composition.is_some() {
+        if self.inner.borrow().composition_context.is_some() {
             self.commit_composition(true);
         }
         self.ensure_session();
         let mut inner = self.inner.borrow_mut();
+        inner.window.hide(); // the word went into the field it was for, if that still could be
         if let Some(session) = inner.session.as_mut() {
             session.activate(runtime::app_name().as_deref());
         }
@@ -251,7 +262,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
 
     fn Deactivate(&self) -> Result<()> {
         crate::guard(|| {
-            if self.inner.borrow().composition.is_some() {
+            if self.inner.borrow().composition_context.is_some() {
                 self.commit_composition(false);
             }
             let (thread_mgr, cookie, client_id) = {
@@ -272,6 +283,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
             inner.session = None;
             inner.composition = None;
             inner.composition_context = None;
+            inner.window.destroy();
             crate::log::write("deactivated");
             Ok(())
         })

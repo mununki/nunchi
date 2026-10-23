@@ -277,6 +277,27 @@ fn text_of(edit: HWND) -> String {
     }
 }
 
+/// The word Araso shows in its composition window, where the field can't show it (IMM32 fields):
+/// it stays out of the field until it ends.
+fn composition_window_text() -> String {
+    extern "system" fn visit(hwnd: HWND, found: LPARAM) -> windows::core::BOOL {
+        unsafe {
+            let mut class = [0u16; 64];
+            let n = GetClassNameW(hwnd, &mut class) as usize;
+            if String::from_utf16_lossy(&class[..n]) == "ArasoComposition" && IsWindowVisible(hwnd).as_bool() {
+                *(found.0 as *mut String) = text_of(hwnd);
+            }
+        }
+        true.into()
+    }
+    let mut found = String::new();
+    unsafe {
+        use windows::Win32::System::Threading::GetCurrentThreadId;
+        let _ = EnumThreadWindows(GetCurrentThreadId(), Some(visit), LPARAM(&mut found as *mut String as isize));
+    }
+    found
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let richedit = args.iter().any(|a| a == "--richedit");
@@ -418,14 +439,14 @@ fn main() {
                 eprintln!("{e}");
                 std::process::exit(3);
             }
-            // Commit whatever is still composing with a click-like focus change.
-            let got = text_of(edit);
+            // What is on screen: the field, and the word in Araso's window after it.
+            let got = text_of(edit) + &composition_window_text();
             let ok = got == *expected;
             if !ok {
                 failures += 1;
             }
             println!("{} {keys:?} → {got:?}{}", if ok { "ok  " } else { "FAIL" }, if ok { String::new() } else { format!(" (expected {expected:?})") });
-            // Esc commits anything left composing before the next case.
+            // Return commits anything left composing before the next case.
             let _ = type_keys(window, "⏎");
         }
         let field = if richedit {

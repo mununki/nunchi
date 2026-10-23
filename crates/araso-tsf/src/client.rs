@@ -1,17 +1,22 @@
 //! `TextClient` over a TSF context inside an edit session: the marked text is Araso's
 //! composition (underlined with its display attribute), and ranges are ACP offsets, UTF-16 units
-//! as `TextRange` counts them. A field that can't give ACP offsets answers "not known".
+//! as `TextRange` counts them. A field that can't give ACP offsets answers "not known". In an
+//! IMM32 app the marked text is shown in a window of its own instead (`CompositionWindow`).
 
 use std::mem::ManuallyDrop;
 
 use araso_core::{TextClient, TextRange};
-use windows::core::{Interface, Result};
+use windows::core::{Interface, Result, BOOL};
+use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::System::Variant::{VARIANT, VT_I4};
+use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
 use windows::Win32::UI::TextServices::{
     ITfComposition, ITfCompositionSink, ITfContext, ITfContextComposition, ITfInsertAtSelection, ITfRange,
     ITfRangeACP, GUID_PROP_ATTRIBUTE, INSERT_TEXT_AT_SELECTION_FLAGS, TF_AE_NONE, TF_ANCHOR_END,
     TF_DEFAULT_SELECTION, TF_IAS_QUERYONLY, TF_SELECTION, TF_SELECTIONSTYLE,
 };
+
+use crate::composition_window::{self, CompositionWindow};
 
 pub struct TsfClient<'a> {
     pub ec: u32,
@@ -20,10 +25,11 @@ pub struct TsfClient<'a> {
     pub sink: &'a ITfCompositionSink,
     /// The display attribute's atom (0: none registered).
     pub atom: u32,
-    /// The context stands in for an IMM32 app (TSF's transitory contexts): there a Korean
-    /// composition has to be selected as an interim character, as Korean IMEs mark the syllable
-    /// they compose, or the compatibility layer ends it after every key.
-    pub transitory: bool,
+    /// Where the marked text goes when the context stands in for an IMM32 app (TSF's transitory
+    /// contexts). The compatibility layer shows a Korean composition as the one syllable Korean
+    /// IMEs compose, and only its first character: there the word is shown in this window, and
+    /// goes into the field when it ends.
+    pub window: Option<&'a mut CompositionWindow>,
 }
 
 /// `TS_SS_TRANSITORY` of `TS_STATUS::dwStaticFlags`.
@@ -52,16 +58,13 @@ impl TsfClient<'_> {
         Ok(TextRange::new(start.max(0) as usize, length.max(0) as usize))
     }
 
-    /// The caret after `range`, or with `interim` the range selected as the interim character.
-    fn caret_after(&self, range: &ITfRange, interim: bool) -> Result<()> {
+    fn caret_after(&self, range: &ITfRange) -> Result<()> {
         unsafe {
             let caret = range.Clone()?;
-            if !interim {
-                caret.Collapse(self.ec, TF_ANCHOR_END)?;
-            }
+            caret.Collapse(self.ec, TF_ANCHOR_END)?;
             let mut selection = TF_SELECTION {
                 range: ManuallyDrop::new(Some(caret)),
-                style: TF_SELECTIONSTYLE { ase: TF_AE_NONE, fInterimChar: interim.into() },
+                style: TF_SELECTIONSTYLE { ase: TF_AE_NONE, fInterimChar: false.into() },
             };
             let result = self.context.SetSelection(self.ec, std::slice::from_ref(&selection));
             ManuallyDrop::drop(&mut selection.range);
@@ -91,6 +94,16 @@ impl TsfClient<'_> {
     }
 
     fn try_set_marked(&mut self, text: &str, replacing: Option<TextRange>) -> Result<()> {
+        if self.window.is_some() {
+            // Nothing before the caret can be read there, so nothing is replaced either.
+            let caret = if text.is_empty() { None } else { self.caret() };
+            let window = self.window.as_deref_mut().unwrap();
+            match caret {
+                Some((caret, field)) => window.show(text, caret, field),
+                None => window.hide(),
+            }
+            return Ok(());
+        }
         unsafe {
             if text.is_empty() && replacing.is_none() {
                 if let Some(composition) = self.composition.take() {
@@ -100,13 +113,13 @@ impl TsfClient<'_> {
                 }
                 return Ok(());
             }
-            let (range, started) = match self.composition.as_ref() {
+            let range = match self.composition.as_ref() {
                 Some(composition) => {
                     if let Some(replacing) = replacing {
                         let start = self.range_at(replacing.location, 0)?;
                         composition.ShiftStart(self.ec, &start)?;
                     }
-                    (composition.GetRange()?, false)
+                    composition.GetRange()?
                 }
                 None => {
                     let start = match replacing {
@@ -120,46 +133,48 @@ impl TsfClient<'_> {
                     let composition = contexts.StartComposition(self.ec, &start, self.sink)?;
                     let range = composition.GetRange()?;
                     *self.composition = Some(composition);
-                    (range, true)
+                    range
                 }
             };
-            let text = utf16(text);
-            if !self.transitory {
-                range.SetText(self.ec, 0, &text)?;
-                let _ = self.underline(&range);
-                return self.caret_after(&range, false);
-            }
-            // An IMM32 app sees a Korean composition through the compatibility layer, which ends
-            // it after every key unless it is selected as an interim character. An interim
-            // selection must start as one character; it then grows and shrinks with the word.
-            if started {
-                range.SetText(self.ec, 0, &text[..1])?;
-                let _ = self.caret_after(&range, true);
-                if text.len() > 1 {
-                    range.SetText(self.ec, 0, &text)?;
-                }
-            } else {
-                range.SetText(self.ec, 0, &text)?;
-            }
+            range.SetText(self.ec, 0, &utf16(text))?;
             let _ = self.underline(&range);
-            Ok(())
+            self.caret_after(&range)
         }
     }
 
+    /// Where the composition window goes: the field's caret, or where TSF says the selection is.
+    fn caret(&self) -> Option<(RECT, HWND)> {
+        if let Some(caret) = composition_window::system_caret() {
+            return Some(caret);
+        }
+        let field = unsafe { GetFocus() };
+        let selection = self.selection().ok()??;
+        let mut rect = RECT::default();
+        let mut clipped = BOOL(0);
+        unsafe {
+            let view = self.context.GetActiveView().ok()?;
+            view.GetTextExt(self.ec, &selection, &mut rect, &mut clipped).ok()?;
+        }
+        (!field.is_invalid()).then_some((rect, field))
+    }
+
     fn try_insert(&mut self, text: &str, replacing: Option<TextRange>) -> Result<()> {
+        if let Some(window) = self.window.as_deref_mut() {
+            window.hide();
+        }
         unsafe {
             match (replacing, self.composition.take()) {
                 (None, Some(composition)) => {
                     let range = composition.GetRange()?;
                     range.SetText(self.ec, 0, &utf16(text))?;
                     self.clear_underline(&range);
-                    let _ = self.caret_after(&range, false);
+                    let _ = self.caret_after(&range);
                     composition.EndComposition(self.ec)
                 }
                 (None, None) => {
                     let insert: ITfInsertAtSelection = self.context.cast()?;
                     let range = insert.InsertTextAtSelection(self.ec, INSERT_TEXT_AT_SELECTION_FLAGS(0), &utf16(text))?;
-                    self.caret_after(&range, false)
+                    self.caret_after(&range)
                 }
                 (Some(replacing), composition) => {
                     // A committed word changed in place: nothing is being composed then, but if
@@ -169,23 +184,24 @@ impl TsfClient<'_> {
                     }
                     let range = self.range_at(replacing.location, replacing.length)?;
                     range.SetText(self.ec, 0, &utf16(text))?;
-                    self.caret_after(&range, false)
+                    self.caret_after(&range)
                 }
             }
         }
     }
 
-    fn try_selection(&self) -> Result<Option<TextRange>> {
+    fn selection(&self) -> Result<Option<ITfRange>> {
         unsafe {
             let mut selection = [TF_SELECTION { range: ManuallyDrop::new(None), style: TF_SELECTIONSTYLE::default() }];
             let mut fetched = 0u32;
             self.context.GetSelection(self.ec, TF_DEFAULT_SELECTION, &mut selection, &mut fetched)?;
             let range = ManuallyDrop::take(&mut selection[0].range);
-            match (fetched, range) {
-                (1, Some(range)) => Ok(Some(Self::extent(&range)?)),
-                _ => Ok(None),
-            }
+            Ok(range.filter(|_| fetched == 1))
         }
+    }
+
+    fn try_selection(&self) -> Result<Option<TextRange>> {
+        self.selection()?.map(|range| Self::extent(&range)).transpose()
     }
 
     fn try_text(&self, range: TextRange) -> Result<String> {
