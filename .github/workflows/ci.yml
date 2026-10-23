@@ -42,6 +42,7 @@ jobs:
         shell: powershell
         run: scripts\build-installer.ps1
 
+      # A draft: its notes are written, and it is looked over, before it's published.
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
@@ -49,7 +50,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $setup = Get-ChildItem target\installer\Nunchi-Setup-*.exe | Select-Object -First 1
-          gh release create "${{ github.ref_name }}" $setup.FullName --title "Nunchi ${{ github.ref_name }}" --generate-notes
+          gh release create "${{ github.ref_name }}" $setup.FullName --title "눈치 (Nunchi) ${{ github.ref_name }}" --draft --generate-notes
 
   # Real keys typed into each kind of field (scripts\typing-tests.ps1), with the input method
   # registered on the runner. It needs the runner's desktop session to take keys and the
