@@ -5,8 +5,12 @@
 //!   araso-typing-test                 the built-in cases
 //!   araso-typing-test cases.tsv       "keys<TAB>expected" per line
 //!   araso-typing-test --richedit      a RichEdit (TSF-aware) control instead of a plain EDIT (CUAS)
+//!   araso-typing-test --richedit-imm  a RichEdit left to IMM32 (KakaoTalk's chat input)
 //!   araso-typing-test --imm           a field that does its own IMM32 handling (Qt, Java, games)
 //!   araso-typing-test --dev           the development build, "Araso (개발)", not the installed Araso
+//!   araso-typing-test --appcontainer  the same, inside the sandbox Store apps run in
+//!   araso-typing-test --log           with Araso's diagnostic log at the end
+//!   araso-typing-test --browser       into a textarea in Chrome (or Edge), with the input method chosen there
 //!
 //! In the keys: "⎋" Esc, "⇧" Shift+Esc, "⏎" Return, "⌫" Backspace, "⇥" Tab.
 //! It takes the keyboard focus for a few seconds; it stops at once if its window loses it, so
@@ -230,24 +234,21 @@ fn memory() -> (usize, usize) {
     (counters.PrivateUsage / 1024, counters.WorkingSetSize / 1024)
 }
 
-/// The Araso DLLs loaded in this process (the installed one and the development build may both be).
-fn araso_module() -> Option<String> {
+/// The Araso DLLs loaded in `process` (the installed one and the development build may both be).
+fn araso_module(process: windows::Win32::Foundation::HANDLE) -> Option<String> {
     use windows::Win32::Foundation::HMODULE;
-    use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
-    use windows::Win32::System::ProcessStatus::EnumProcessModules;
-    use windows::Win32::System::Threading::GetCurrentProcess;
+    use windows::Win32::System::ProcessStatus::{EnumProcessModules, GetModuleFileNameExW};
     let mut modules = vec![HMODULE::default(); 1024];
     let mut needed = 0u32;
     unsafe {
-        EnumProcessModules(GetCurrentProcess(), modules.as_mut_ptr(), (modules.len() * std::mem::size_of::<HMODULE>()) as u32, &mut needed)
-            .ok()?;
+        EnumProcessModules(process, modules.as_mut_ptr(), (modules.len() * std::mem::size_of::<HMODULE>()) as u32, &mut needed).ok()?;
     }
     let count = (needed as usize / std::mem::size_of::<HMODULE>()).min(modules.len());
     let paths: Vec<String> = modules[..count]
         .iter()
         .filter_map(|&module| {
             let mut buffer = [0u16; 1024];
-            let n = unsafe { GetModuleFileNameW(Some(module), &mut buffer) } as usize;
+            let n = unsafe { GetModuleFileNameExW(Some(process), Some(module), &mut buffer) } as usize;
             let path = String::from_utf16_lossy(&buffer[..n]);
             let name = path.rsplit('\\').next().unwrap_or_default().to_lowercase();
             (name.starts_with("araso_tsf") || name.starts_with("araso_dev")).then_some(path)
@@ -298,9 +299,251 @@ fn composition_window_text() -> String {
     found
 }
 
+/// Runs the test again inside an AppContainer, the sandbox Store apps run in: there Araso loads
+/// only if its DLL is readable by all app packages, and can't read %APPDATA%.
+fn run_in_app_container(args: &[String]) -> i32 {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
+    use windows::Win32::Security::Isolation::{CreateAppContainerProfile, DeriveAppContainerSidFromAppContainerName};
+    use windows::Win32::Security::{FreeSid, SECURITY_CAPABILITIES};
+    use windows::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE};
+    use windows::Win32::System::Threading::*;
+
+    let exe = std::env::current_exe().expect("this program");
+    // The sandbox reads only what all app packages may: this program and the cases file too, then.
+    let files = args.iter().filter(|a| !a.starts_with("--")).map(std::path::PathBuf::from);
+    for path in std::iter::once(exe.clone()).chain(files) {
+        let _ = std::process::Command::new("icacls").arg(&path).args(["/grant", "*S-1-15-2-1:(RX)"]).output();
+    }
+    unsafe {
+        let name = w!("Araso.TypingTest");
+        let sid = CreateAppContainerProfile(name, name, name, None)
+            .or_else(|_| DeriveAppContainerSidFromAppContainerName(name))
+            .expect("app container");
+        let capabilities = SECURITY_CAPABILITIES { AppContainerSid: sid, ..Default::default() };
+        let mut size = 0usize;
+        let _ = InitializeProcThreadAttributeList(None, 1, None, &mut size);
+        let mut buffer = vec![0u8; size];
+        let list = LPPROC_THREAD_ATTRIBUTE_LIST(buffer.as_mut_ptr() as *mut _);
+        InitializeProcThreadAttributeList(Some(list), 1, None, &mut size).expect("attribute list");
+        UpdateProcThreadAttribute(
+            list,
+            0,
+            PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES as usize,
+            Some(&capabilities as *const _ as *const std::ffi::c_void),
+            std::mem::size_of::<SECURITY_CAPABILITIES>(),
+            None,
+            None,
+        )
+        .expect("security capabilities");
+        let mut startup = STARTUPINFOEXW::default();
+        startup.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
+        startup.lpAttributeList = list;
+        // It reports through this process's output.
+        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE).unwrap_or_default();
+        startup.StartupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE).unwrap_or_default();
+        for handle in [startup.StartupInfo.hStdOutput, startup.StartupInfo.hStdError] {
+            let _ = SetHandleInformation(handle, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT);
+        }
+        let quoted: Vec<String> = std::iter::once(exe.display().to_string()).chain(args.iter().cloned()).map(|a| format!("\"{a}\"")).collect();
+        let mut command: Vec<u16> = quoted.join(" ").encode_utf16().chain(Some(0)).collect();
+        // A folder the sandbox can read, to start in.
+        let system: Vec<u16> = format!("{}\\System32", std::env::var("SystemRoot").unwrap_or("C:\\Windows".into()))
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        let mut process = PROCESS_INFORMATION::default();
+        CreateProcessW(
+            None,
+            Some(PWSTR(command.as_mut_ptr())),
+            None,
+            None,
+            true,
+            EXTENDED_STARTUPINFO_PRESENT,
+            None,
+            PCWSTR(system.as_ptr()),
+            &startup.StartupInfo,
+            &mut process,
+        )
+        .expect("start the test in the app container");
+        // A sandboxed program can't take the foreground from the app in front: it's handed over from here.
+        bring_forward(process.dwProcessId);
+        WaitForSingleObject(process.hProcess, INFINITE);
+        let mut code = 0u32;
+        let _ = GetExitCodeProcess(process.hProcess, &mut code);
+        DeleteProcThreadAttributeList(list);
+        FreeSid(sid);
+        code as i32
+    }
+}
+
+/// Gives the test window of process `pid` the foreground once it is there.
+fn bring_forward(pid: u32) {
+    for _ in 0..250 {
+        if let Some(window) = find_window(w!("ArasoTypingTest"), |window, owner| owner == pid && !window.is_invalid()) {
+            bring_to_front(window);
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A top-level window of class `class` that `accept`s it and its process.
+fn find_window(class: PCWSTR, accept: impl Fn(HWND, u32) -> bool) -> Option<HWND> {
+    unsafe {
+        let mut window = FindWindowExW(None, None, class, None).ok();
+        while let Some(w) = window {
+            let mut owner = 0u32;
+            GetWindowThreadProcessId(w, Some(&mut owner));
+            if accept(w, owner) {
+                return Some(w);
+            }
+            window = FindWindowExW(None, Some(w), class, None).ok();
+        }
+        None
+    }
+}
+
+/// Sharing the input state of the window in front lets `window` take the foreground.
+fn bring_to_front(window: HWND) {
+    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    unsafe {
+        let front = GetWindowThreadProcessId(GetForegroundWindow(), None);
+        let me = GetCurrentThreadId();
+        let attached = front != 0 && front != me && AttachThreadInput(me, front, true).as_bool();
+        let _ = SetForegroundWindow(window);
+        let _ = BringWindowToTop(window);
+        if attached {
+            let _ = AttachThreadInput(me, front, false);
+        }
+    }
+}
+
+/// `--browser`: the cases typed into a textarea in Chrome (or Edge), started with a profile of its
+/// own; the page puts what the field holds in its title, where this program reads it. The browser
+/// types with whichever input method is chosen (Win+Space), as any app does.
+fn run_in_browser(cases: &[(String, String)], support: &std::path::Path) -> i32 {
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
+    let candidates = [
+        format!("{}\\Google\\Chrome\\Application\\chrome.exe", std::env::var("ProgramFiles").unwrap_or_default()),
+        format!("{}\\Google\\Chrome\\Application\\chrome.exe", std::env::var("LOCALAPPDATA").unwrap_or_default()),
+        format!("{}\\Microsoft\\Edge\\Application\\msedge.exe", std::env::var("ProgramFiles(x86)").unwrap_or_default()),
+    ];
+    let Some(browser) = candidates.iter().find(|p| std::path::Path::new(p).exists()) else {
+        eprintln!("neither Chrome nor Edge is installed");
+        return 2;
+    };
+    let page = "data:text/html;charset=utf-8,<title>ARASO\"\"</title>\
+        <textarea id=t autofocus style='font-size:24px;width:90%;height:150px'></textarea>\
+        <script>const t=document.getElementById('t');const show=()=>document.title='ARASO'+JSON.stringify(t.value);\
+        t.addEventListener('input',show);\
+        document.addEventListener('keydown',e=>{if(e.key=='F9'){t.value='';show()}})</script>";
+    let profile = support.join("browser-profile");
+    let mut child = match std::process::Command::new(browser)
+        .arg(format!("--user-data-dir={}", profile.display()))
+        .args(["--no-first-run", "--no-default-browser-check", "--disable-sync", "--new-window", page])
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(e) => {
+            eprintln!("{browser} didn't start: {e}");
+            return 2;
+        }
+    };
+    let title = |window: HWND| {
+        let text = text_of(window);
+        let json = text.strip_prefix("ARASO")?;
+        parse_json_string(json)
+    };
+    let mut window = None;
+    for _ in 0..500 {
+        window = find_window(w!("Chrome_WidgetWin_1"), |w, _| text_of(w).starts_with("ARASO"));
+        if window.is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let Some(window) = window else {
+        eprintln!("the browser window didn't show up");
+        let _ = child.kill();
+        return 2;
+    };
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(window, Some(&mut pid)) };
+    bring_to_front(window);
+    std::thread::sleep(Duration::from_millis(1500));
+    let mut failures = 0;
+    for (keys, expected) in cases {
+        if let Err(e) = type_keys(window, keys) {
+            eprintln!("{e}");
+            let _ = child.kill();
+            return 3;
+        }
+        std::thread::sleep(Duration::from_millis(150));
+        let got = title(window).unwrap_or_else(|| format!("(title {:?})", text_of(window)));
+        // Araso's word window must not show here: the browser shows the word itself.
+        let boxed = find_window(w!("ArasoComposition"), |w, owner| owner == pid && unsafe { IsWindowVisible(w) }.as_bool())
+            .map(text_of);
+        let ok = got == *expected && boxed.is_none();
+        if !ok {
+            failures += 1;
+        }
+        let note = match (&boxed, got == *expected) {
+            (Some(b), _) => format!(" (and in Araso's window: {b:?})"),
+            (None, false) => format!(" (expected {expected:?})"),
+            (None, true) => String::new(),
+        };
+        println!("{} {keys:?} → {got:?}{note}", if ok { "ok  " } else { "FAIL" });
+        let _ = type_keys(window, "⏎");
+        unsafe { SendInput(&[key_input(VK_F9, false), key_input(VK_F9, true)], std::mem::size_of::<INPUT>() as i32) };
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    println!("{} of {} cases as expected ({})", cases.len() - failures, cases.len(), browser.rsplit('\\').next().unwrap_or(browser));
+    let loaded = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) }
+        .ok()
+        .and_then(araso_module)
+        .unwrap_or_else(|| "no Araso DLL (is Araso the chosen input method?)".into());
+    println!("browser loaded: {loaded}");
+    unsafe {
+        let _ = PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0));
+    }
+    let _ = child.wait();
+    if failures > 0 { 1 } else { 0 }
+}
+
+/// The JSON string at the start of `text`.
+fn parse_json_string(text: &str) -> Option<String> {
+    let mut chars = text.strip_prefix('"')?.chars();
+    let mut out = String::new();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return Some(out),
+            '\\' => match chars.next()? {
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                'r' => out.push('\r'),
+                'u' => {
+                    let hex: String = chars.by_ref().take(4).collect();
+                    out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?);
+                }
+                other => out.push(other),
+            },
+            c => out.push(c),
+        }
+    }
+    None
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--appcontainer") {
+        let rest: Vec<String> = args.iter().filter(|a| *a != "--appcontainer").cloned().collect();
+        std::process::exit(run_in_app_container(&rest));
+    }
     let richedit = args.iter().any(|a| a == "--richedit");
+    // A RichEdit left to IMM32, as KakaoTalk's chat input is.
+    let richedit_imm = args.iter().any(|a| a == "--richedit-imm");
     let dev = args.iter().any(|a| a == "--dev");
     let (clsid, profile) = if dev { (CLSID_ARASO_DEV, GUID_PROFILE_DEV) } else { (CLSID_ARASO, GUID_PROFILE) };
     let imm = args.iter().any(|a| a == "--imm");
@@ -320,6 +563,12 @@ fn main() {
     // the user's dictionary.
     let support = std::env::temp_dir().join(format!("araso-typing-test-{}", std::process::id()));
     unsafe { std::env::set_var("ARASO_SUPPORT_DIR", &support) };
+    // `--log`: Araso's diagnostic log (kinds of keys and contexts, never text), shown at the end.
+    let log = args.iter().any(|a| a == "--log");
+    if log {
+        let _ = std::fs::create_dir_all(&support);
+        let _ = std::fs::write(support.join("logging"), "");
+    }
 
     // Never left running: whatever happens, it ends within a minute.
     std::thread::spawn(|| {
@@ -327,6 +576,16 @@ fn main() {
         eprintln!("timed out");
         std::process::exit(4);
     });
+    if args.iter().any(|a| a == "--browser") {
+        let code = run_in_browser(&cases, &support);
+        if log {
+            for entry in std::fs::read_dir(support.join("logs")).into_iter().flatten().flatten() {
+                println!("--- {}", entry.file_name().to_string_lossy());
+                print!("{}", std::fs::read_to_string(entry.path()).unwrap_or_default());
+            }
+        }
+        std::process::exit(code);
+    }
     let step = |s: &str| {
         use std::io::Write;
         eprintln!("[{s}]");
@@ -359,7 +618,7 @@ fn main() {
             None,
         )
         .expect("window");
-        let edit_class: PCWSTR = if richedit {
+        let edit_class: PCWSTR = if richedit || richedit_imm {
             let _ = LoadLibraryW(w!("Msftedit.dll"));
             w!("RICHEDIT50W")
         } else if imm {
@@ -451,6 +710,8 @@ fn main() {
         }
         let field = if richedit {
             "RichEdit, TSF"
+        } else if richedit_imm {
+            "RichEdit, IMM32"
         } else if imm {
             "own IMM32 handling"
         } else {
@@ -461,13 +722,19 @@ fn main() {
             "{}-bit test process, typed with {}; loaded: {}",
             std::mem::size_of::<usize>() * 8,
             active_profile(&profiles),
-            araso_module().unwrap_or_else(|| "no Araso DLL".into())
+            araso_module(windows::Win32::System::Threading::GetCurrentProcess()).unwrap_or_else(|| "no Araso DLL".into())
         );
         let after = memory();
         println!(
             "memory with Araso: private {} → {} KB, working set {} → {} KB",
             before.0, after.0, before.1, after.1
         );
+        if log {
+            for entry in std::fs::read_dir(support.join("logs")).into_iter().flatten().flatten() {
+                println!("--- {}", entry.file_name().to_string_lossy());
+                print!("{}", std::fs::read_to_string(entry.path()).unwrap_or_default());
+            }
+        }
         let _ = DestroyWindow(window);
         std::process::exit(if failures > 0 { 1 } else { 0 });
     }

@@ -8,16 +8,17 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use araso_core::{InputSession, Key};
+use araso_core::{InputSession, Key, TextClient, TextRange};
 use windows::core::{implement, Interface, Ref, Result, BOOL, GUID};
 use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
-use windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY;
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, VIRTUAL_KEY};
 use windows::Win32::UI::TextServices::*;
 use windows_core::IUnknownImpl;
 
 use crate::client::TsfClient;
 use crate::composition_window::CompositionWindow;
+use crate::edit_field::{self, EditClient, EditWord};
 use crate::display_attribute::{DisplayAttributeInfo, EnumDisplayAttributeInfo};
 use crate::edit_session::EditSession;
 use crate::keys::{self, Action};
@@ -43,9 +44,14 @@ struct Inner {
     client_id: u32,
     thread_mgr_cookie: Option<u32>,
     composition: Option<ITfComposition>,
-    /// The context the composition is in, or the one the composition window's word is for.
+    /// The context the composition is in, or the one the composition window's or EDIT control's
+    /// word is for.
     composition_context: Option<ITfContext>,
     window: CompositionWindow,
+    /// The word being typed straight into an EDIT or RichEdit control.
+    edit_word: Option<EditWord>,
+    /// The context last described in the log.
+    described: Option<ITfContext>,
     session: Option<InputSession>,
     generation: u64,
     atom: u32,
@@ -104,31 +110,46 @@ impl TextService_Impl {
     fn edit<R: 'static>(
         &self,
         context: &ITfContext,
-        op: impl FnOnce(&mut InputSession, &mut TsfClient) -> R + 'static,
+        op: impl FnOnce(&mut InputSession, &mut dyn TextClient) -> R + 'static,
     ) -> Option<R> {
         let this = self.to_object();
         let result: Rc<RefCell<Option<R>>> = Rc::new(RefCell::new(None));
         let out = result.clone();
         let session_context = context.clone();
         let body = EditSession::new(move |ec| {
-            let (mut session, mut composition, mut window, atom) = {
+            let (mut session, mut composition, mut window, edit_word, atom) = {
                 let mut inner = this.inner.borrow_mut();
                 let Some(session) = inner.session.take() else { return Ok(()) };
-                (session, inner.composition.take(), std::mem::take(&mut inner.window), inner.atom)
+                let window = std::mem::take(&mut inner.window);
+                (session, inner.composition.take(), window, inner.edit_word.take(), inner.atom)
             };
-            let sink: ITfCompositionSink = this.to_interface();
-            let transitory = crate::client::is_transitory(&session_context);
-            let mut client = TsfClient {
-                ec,
-                context: &session_context,
-                composition: &mut composition,
-                sink: &sink,
-                atom,
-                window: transitory.then_some(&mut window),
+            let imm32 = crate::client::is_imm32(&session_context);
+            // An EDIT or RichEdit control behind the compatibility layer takes the word itself: the
+            // one it is being typed in, or the focused one.
+            let field = match edit_word {
+                Some(word) => Some(word.field),
+                None if imm32 => edit_field::focused(),
+                None => None,
             };
-            let r = op(&mut session, &mut client);
+            let mut word = edit_word.map(|w| w.range);
+            let r = match field {
+                Some(field) => op(&mut session, &mut EditClient { field, word: &mut word }),
+                None => {
+                    let sink: ITfCompositionSink = this.to_interface();
+                    let mut client = TsfClient {
+                        ec,
+                        context: &session_context,
+                        composition: &mut composition,
+                        sink: &sink,
+                        atom,
+                        window: imm32.then_some(&mut window),
+                    };
+                    op(&mut session, &mut client)
+                }
+            };
             let mut inner = this.inner.borrow_mut();
-            let composing = composition.is_some() || window.is_visible();
+            inner.edit_word = field.zip(word).map(|(field, range)| EditWord { field, range });
+            let composing = composition.is_some() || window.is_visible() || inner.edit_word.is_some();
             inner.composition_context = composing.then(|| session_context.clone());
             inner.composition = composition;
             inner.window = window;
@@ -171,9 +192,33 @@ impl TextService_Impl {
         });
     }
 
+    /// A click (or the app) moved the caret off the word being typed in an EDIT or RichEdit
+    /// control: the word stays as it is, and the next key starts a new one, as when an app ends a
+    /// composition.
+    fn check_edit_word(&self) {
+        let mut inner = self.inner.borrow_mut();
+        let Some(word) = inner.edit_word else { return };
+        let caret = TextRange::new(word.range.end(), 0);
+        if unsafe { GetFocus() } == word.field.hwnd && edit_field::selection(word.field.hwnd) == Some(caret) {
+            return;
+        }
+        edit_field::underline(&word, false);
+        inner.edit_word = None;
+        inner.composition_context = None;
+        if let Some(session) = inner.session.as_mut() {
+            session.composition_terminated();
+        }
+        crate::log::write("caret left the word in the edit control");
+    }
+
     fn key_down(&self, context: &ITfContext, wparam: WPARAM, lparam: LPARAM) -> bool {
         let vk = VIRTUAL_KEY(wparam.0 as u16);
         self.inner.borrow_mut().taps.key_down(vk, lparam.0);
+        if crate::log::enabled() && self.inner.borrow().described.as_ref() != Some(context) {
+            self.inner.borrow_mut().described = Some(context.clone());
+            crate::log::write(&crate::client::describe(context));
+        }
+        self.check_edit_word();
         self.ensure_session();
         let runtime = runtime::current();
         if !runtime.has_data() {
@@ -208,6 +253,7 @@ impl TextService_Impl {
     fn key_up(&self, context: &ITfContext, wparam: WPARAM, lparam: LPARAM) -> bool {
         let vk = VIRTUAL_KEY(wparam.0 as u16);
         let Some(tap) = self.inner.borrow_mut().taps.key_up(vk, lparam.0) else { return false };
+        self.check_edit_word();
         self.ensure_session();
         let runtime = runtime::current();
         if !runtime.has_data() {
@@ -249,6 +295,7 @@ impl TextService_Impl {
         self.ensure_session();
         let mut inner = self.inner.borrow_mut();
         inner.window.hide(); // the word went into the field it was for, if that still could be
+        inner.edit_word = None;
         if let Some(session) = inner.session.as_mut() {
             session.activate(runtime::app_name().as_deref());
         }
@@ -283,6 +330,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
             inner.session = None;
             inner.composition = None;
             inner.composition_context = None;
+            inner.edit_word = None;
             inner.window.destroy();
             crate::log::write("deactivated");
             Ok(())

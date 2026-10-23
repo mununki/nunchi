@@ -86,9 +86,11 @@ powershell -ExecutionPolicy Bypass -File scripts/dev-register.ps1
 각각의 `regsvr32`로 등록하고, 키보드 목록에 "Araso (개발)"을 넣습니다. 처음 한 번만 하면 됩니다.
 
 - 고친 뒤 다시 넣기: `scripts/dev-update.ps1` (UAC 없이, 두 DLL 모두, 새로 여는 앱부터 반영)
-- 실제 키 입력 테스트: `cargo run --release -p araso-typing-test -- --dev --richedit` (`--imm`: IMM32 앱처럼, 옵션 없이: Win32 EDIT,
-  `--dev`를 빼면 설치한 Araso). 32비트 앱으로 확인하려면 `--target i686-pc-windows-msvc`를 붙입니다. 자기 창을 띄워
+- 실제 키 입력 테스트: `cargo run --release -p araso-typing-test -- --dev --richedit` (`--imm`: IMM32 앱처럼,
+  `--richedit-imm`: 카카오톡 입력창처럼 IMM32로 쓰는 RichEdit, 옵션 없이: Win32 EDIT, `--dev`를 빼면 설치한 Araso). 32비트 앱으로 확인하려면 `--target i686-pc-windows-msvc`를 붙입니다. 자기 창을 띄워
   몇 초간 키보드를 쓰고, 포커스를 잃으면 멈춥니다. 끝에 어느 DLL이 입력을 맡았는지와 메모리를 보여 줍니다.
+  `--appcontainer`는 스토어 앱과 같은 샌드박스 안에서, `--browser`는 Chrome(없으면 Edge)의 입력란에서(지금 고른
+  입력기로, 따로 만든 프로필로) 시험하고, `--log`는 진단 기록(키의 종류와 입력란의 종류)을 끝에 보여 줍니다.
 - 키가 실제로 보내는 신호 보기: `scripts/key-check.ps1` (키캡 없는 한/영·한자 키, 맥 배열 키보드)
 - 제거: `scripts/dev-register.ps1 -Unregister`
 
@@ -114,9 +116,11 @@ CI(`.github/workflows/ci.yml`)가 같은 설치 파일을 만들어 릴리스에
 
 ## 알려진 한계
 
-- **IMM32 앱**(클래식 Win32 입력란, 탐색기의 이름 바꾸기, Qt, Java, 많은 게임)은 조합 중인 한글을 한 글자만 보여 줘서,
-  치는 단어는 입력란 대신 커서 위의 작은 창(밑줄)에 보이고 단어가 끝날 때 한 번에 들어갑니다.
-  확정한 글자를 입력기에 돌려주지 못해 *확정한 뒤에 고치기*가 안 됩니다. 그런 앱에서는 `holdSpace`를 켜면 Space 뒤에도
+- **IMM32 앱**은 Windows의 호환 계층을 거쳐 조합 중인 한글을 한 글자만 보여 줍니다. 클래식 입력란(EDIT·RichEdit:
+  탐색기의 이름 바꾸기, 카카오톡 입력창, 대화 상자)에는 Araso가 단어를 직접 넣어서 TSF 앱과 똑같이 동작합니다(서식이
+  없는 EDIT에서는 치는 단어에 밑줄이 없습니다). 그 밖의 IMM32 앱
+  (Qt, Java, 많은 게임)에서는 치는 단어가 커서 위의 작은 창(밑줄)에 보이고 단어가 끝날 때 한 번에 들어가며, 확정한
+  글자를 입력기에 돌려주지 못해 *확정한 뒤에 고치기*가 안 됩니다. 그런 앱에서는 `holdSpace`를 켜면 Space 뒤에도
   단어를 잡아 둡니다(원본의 터미널 대책과 같음). 치는 중에 바꾸기는 됩니다.
 - 스토어(샌드박스) 앱 안에서는 `%APPDATA%\Araso`를 못 읽어서 기본 설정으로 동작하고, 학습한 단어도 저장되지 않습니다.
 - 설정 창, 작업 표시줄 메뉴, 업데이트 확인, 일본어 한자 변환(MS-IME 엔진 연동 예정)이 없습니다.

@@ -9,6 +9,7 @@ mod class_factory;
 mod client;
 mod composition_window;
 mod display_attribute;
+mod edit_field;
 mod edit_session;
 mod keyboard_list;
 mod keys;

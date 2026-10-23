@@ -25,18 +25,53 @@ pub struct TsfClient<'a> {
     pub sink: &'a ITfCompositionSink,
     /// The display attribute's atom (0: none registered).
     pub atom: u32,
-    /// Where the marked text goes when the context stands in for an IMM32 app (TSF's transitory
-    /// contexts). The compatibility layer shows a Korean composition as the one syllable Korean
-    /// IMEs compose, and only its first character: there the word is shown in this window, and
-    /// goes into the field when it ends.
+    /// Where the marked text goes when the context stands in for an IMM32 app (`is_imm32`). The
+    /// compatibility layer shows a Korean composition as the one syllable Korean IMEs compose,
+    /// and only its first character: there the word is shown in this window, and goes into the
+    /// field when it ends.
     pub window: Option<&'a mut CompositionWindow>,
 }
 
-/// `TS_SS_TRANSITORY` of `TS_STATUS::dwStaticFlags`.
+/// `TS_STATUS::dwStaticFlags`.
 const TS_SS_TRANSITORY: u32 = 0x4;
+const TS_SS_NOHIDDENTEXT: u32 = 0x8;
 
-pub fn is_transitory(context: &ITfContext) -> bool {
-    unsafe { context.GetStatus() }.is_ok_and(|s| s.dwStaticFlags & TS_SS_TRANSITORY != 0)
+/// The context is TSF's stand-in for an IMM32 app (its compatibility layer, CUAS). Those are
+/// transitory contexts; Chrome marks its own text store transitory too, but it shows a whole
+/// composition itself, and it says it has no hidden text, which the stand-ins don't.
+pub fn is_imm32(context: &ITfContext) -> bool {
+    unsafe { context.GetStatus() }
+        .is_ok_and(|s| s.dwStaticFlags & (TS_SS_TRANSITORY | TS_SS_NOHIDDENTEXT) == TS_SS_TRANSITORY)
+}
+
+/// What the context is, for the log: its status flags, the window it is for, whether that window
+/// has an IMM32 context, and the transitory extension compartment of its document.
+pub fn describe(context: &ITfContext) -> String {
+    use windows::Win32::UI::Input::Ime::{ImmGetContext, ImmReleaseContext};
+    use windows::Win32::UI::TextServices::{ITfCompartmentMgr, GUID_COMPARTMENT_TRANSITORYEXTENSION};
+    use windows::Win32::UI::WindowsAndMessaging::RealGetWindowClassW;
+    unsafe {
+        let (static_flags, dynamic_flags) = context.GetStatus().map_or((0, 0), |s| (s.dwStaticFlags, s.dwDynamicFlags));
+        let hwnd = context.GetActiveView().and_then(|v| v.GetWnd()).unwrap_or_default();
+        let mut class = [0u16; 64];
+        let n = RealGetWindowClassW(hwnd, &mut class) as usize;
+        let imc = ImmGetContext(hwnd);
+        let has_imc = !imc.is_invalid();
+        if has_imc {
+            let _ = ImmReleaseContext(hwnd, imc);
+        }
+        let extension = context
+            .GetDocumentMgr()
+            .and_then(|d| d.cast::<ITfCompartmentMgr>())
+            .and_then(|c| c.GetCompartment(&GUID_COMPARTMENT_TRANSITORYEXTENSION))
+            .and_then(|c| c.GetValue())
+            .map(|v| format!("{:?}", v.Anonymous.Anonymous.vt))
+            .unwrap_or_else(|e| format!("{e}"));
+        format!(
+            "context: static {static_flags:#x} dynamic {dynamic_flags:#x}, window {}, IMM32 context {has_imc}, transitory extension {extension}",
+            String::from_utf16_lossy(&class[..n])
+        )
+    }
 }
 
 fn utf16(text: &str) -> Vec<u16> {

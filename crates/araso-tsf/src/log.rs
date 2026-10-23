@@ -5,7 +5,7 @@
 use std::io::Write;
 use std::sync::OnceLock;
 
-fn enabled() -> bool {
+pub fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| araso_core::support_dir::file("logging").is_some_and(|p| p.exists()))
 }
