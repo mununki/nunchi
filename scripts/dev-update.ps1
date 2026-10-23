@@ -29,6 +29,8 @@ foreach ($b in $builds) {
         continue
     }
     $dir = Split-Path $registered
+    # Readable by Store apps (sandboxed) too, as dev-register.ps1 makes it.
+    icacls $dir /grant '*S-1-15-2-1:(OI)(CI)(RX)' '*S-1-15-2-2:(OI)(CI)(RX)' | Out-Null
     # Copies set aside earlier that nothing has open any more go.
     Get-ChildItem $dir -Filter '*.old-*' | ForEach-Object { Remove-Item $_.FullName -ErrorAction SilentlyContinue }
     if (Test-Path $registered) {

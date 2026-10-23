@@ -51,6 +51,8 @@ if (-not $NoBuild) {
 }
 
 New-Item -ItemType Directory -Force $dir | Out-Null
+# Store apps run sandboxed and load only what all app packages may read, as Program Files allows.
+icacls $dir /grant '*S-1-15-2-1:(OI)(CI)(RX)' '*S-1-15-2-2:(OI)(CI)(RX)' | Out-Null
 # Copies no app has open any more can go.
 Get-ChildItem $dir -Filter 'araso_*' | ForEach-Object { Remove-Item $_.FullName -ErrorAction SilentlyContinue }
 $stamp = Get-Date -Format 'yyyyMMddHHmmss'
