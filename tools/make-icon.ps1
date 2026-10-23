@@ -1,13 +1,13 @@
-# Draws Araso's icons at the sizes Windows asks for, packed as PNG entries into .ico files in
-# crates/araso-tsf/res:
-#   araso.ico     the brand icon: a white 아 on a blue rounded square (keyboard list, installer)
-#   mode-on.ico   the mode icon in the taskbar's input indicator while Araso is on: 가 (the brand
-#                 icon beside it, 아, says which input method it is)
+# Draws Nunchi's icons at the sizes Windows asks for, packed as PNG entries into .ico files in
+# crates/nunchi-tsf/res:
+#   nunchi.ico     the brand icon: a white 눈 on a blue rounded square (keyboard list, installer)
+#   mode-on.ico   the mode icon in the taskbar's input indicator while Nunchi is on: 가 (the brand
+#                 icon beside it, 눈, says which input method it is)
 #   mode-off.ico  the same while it's paused or off in the app (keys go in as typed): 가 with a
 #                 small red x at its top right (not 가/A, which reads as Korean/English)
 # Mode icons are a white glyph with a 1-pixel outline in black at 50%, as Windows asks of IME
 # mode icons: they show on light and dark taskbars alike.
-param([string]$Dir = (Join-Path $PSScriptRoot '..\crates\araso-tsf\res'))
+param([string]$Dir = (Join-Path $PSScriptRoot '..\crates\nunchi-tsf\res'))
 
 Add-Type -AssemblyName System.Drawing
 
@@ -32,12 +32,14 @@ function Draw-Brand([int]$size) {
     $path.AddArc(0, $w - $d, $d, $d, 90, 90)
     $path.CloseFigure()
     $g.FillPath((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 47, 84, 235))), $path)
-    $font = New-Object System.Drawing.Font 'Malgun Gothic', ($size * 0.58), ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
+    # 눈 stacks three parts: small, it takes more of the square to keep them apart.
+    $em = if ($size -le 24) { 0.74 } else { 0.62 }
+    $font = New-Object System.Drawing.Font 'Malgun Gothic', ($size * $em), ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
     $format = New-Object System.Drawing.StringFormat
     $format.Alignment = 'Center'
     $format.LineAlignment = 'Center'
     $rect = New-Object System.Drawing.RectangleF 0, ($size * 0.04), $size, $size
-    $g.DrawString([string][char]0xC544, $font, [System.Drawing.Brushes]::White, $rect, $format)
+    $g.DrawString([string][char]0xB208, $font, [System.Drawing.Brushes]::White, $rect, $format)
     $g.Dispose()
     return $bitmap
 }
@@ -104,6 +106,6 @@ function Write-Ico([string]$out, [int[]]$sizes, [scriptblock]$draw) {
 }
 
 New-Item -ItemType Directory -Force $Dir | Out-Null
-Write-Ico (Join-Path $Dir 'araso.ico') @(16, 20, 24, 32, 40, 48, 64, 256) { param($s) Draw-Brand $s }
+Write-Ico (Join-Path $Dir 'nunchi.ico') @(16, 20, 24, 32, 40, 48, 64, 256) { param($s) Draw-Brand $s }
 Write-Ico (Join-Path $Dir 'mode-on.ico') @(16, 20, 24, 32, 40, 48) { param($s) Draw-Mode $s ([string][char]0xAC00) }
 Write-Ico (Join-Path $Dir 'mode-off.ico') @(16, 20, 24, 32, 40, 48) { param($s) Draw-Mode $s ([string][char]0xAC00) -Off }

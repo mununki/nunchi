@@ -8,18 +8,18 @@
 # 한/영 before the window sees them.
 
 Add-Type -AssemblyName System.Windows.Forms
-Add-Type -Namespace Araso -Name Keys -MemberDefinition @'
+Add-Type -Namespace Nunchi -Name Keys -MemberDefinition @'
 [DllImport("user32.dll")] public static extern short GetKeyState(int key);
 '@
 
 function Side([int]$left, [int]$right, [string]$name) {
-    $l = [Araso.Keys]::GetKeyState($left) -lt 0
-    $r = [Araso.Keys]::GetKeyState($right) -lt 0
+    $l = [Nunchi.Keys]::GetKeyState($left) -lt 0
+    $r = [Nunchi.Keys]::GetKeyState($right) -lt 0
     if ($r -and -not $l) { "right $name" } elseif ($l -and -not $r) { "left $name" } else { $name }
 }
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'Araso key check'
+$form.Text = 'Nunchi key check'
 $form.Width = 520
 $form.Height = 360
 $form.KeyPreview = $true

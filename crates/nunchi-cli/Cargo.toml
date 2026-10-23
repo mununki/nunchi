@@ -1,0 +1,9 @@
+[package]
+name = "nunchi-cli"
+description = "Nunchi's decisions from the command line, for tuning and evaluation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nunchi-core = { path = "../nunchi-core" }

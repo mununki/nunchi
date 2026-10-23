@@ -1,6 +1,6 @@
 # data
 
-The word lists and models of the decision engine. `crates/araso-core/build.rs` turns them into
+The word lists and models of the decision engine. `crates/nunchi-core/build.rs` turns them into
 compact tables built into the binary (`src/tables.rs`), so nothing here is read at run time and
 the input method needs no data folder; only `text_trigrams.txt`, for reranking kanji conversions,
 would be read from a file. All but `spelling_words.txt`

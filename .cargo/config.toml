@@ -1,0 +1,8 @@
+# The C runtime linked into each binary: the input method (64-bit and 32-bit) and the settings
+# window then need no Visual C++ Redistributable, which a clean Windows doesn't have. Without it,
+# the input method DLL wouldn't load at all, and Nunchi would do nothing.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

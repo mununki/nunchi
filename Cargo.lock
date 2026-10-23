@@ -186,49 +186,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "araso-cli"
-version = "0.1.0"
-dependencies = [
- "araso-core",
-]
-
-[[package]]
-name = "araso-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "araso-settings"
-version = "0.1.0"
-dependencies = [
- "araso-core",
- "eframe",
- "embed-resource",
- "windows",
-]
-
-[[package]]
-name = "araso-tsf"
-version = "0.1.0"
-dependencies = [
- "araso-core",
- "embed-resource",
- "windows",
- "windows-core",
-]
-
-[[package]]
-name = "araso-typing-test"
-version = "0.1.0"
-dependencies = [
- "windows",
-]
-
-[[package]]
 name = "arboard"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2030,6 +1987,49 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "nunchi-cli"
+version = "0.1.0"
+dependencies = [
+ "nunchi-core",
+]
+
+[[package]]
+name = "nunchi-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "nunchi-settings"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "embed-resource",
+ "nunchi-core",
+ "windows",
+]
+
+[[package]]
+name = "nunchi-tsf"
+version = "0.1.0"
+dependencies = [
+ "embed-resource",
+ "nunchi-core",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
+name = "nunchi-typing-test"
+version = "0.1.0"
+dependencies = [
+ "windows",
 ]
 
 [[package]]

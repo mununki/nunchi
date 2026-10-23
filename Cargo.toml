@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/araso-core", "crates/araso-cli", "crates/araso-tsf", "crates/araso-settings", "crates/araso-typing-test"]
+members = ["crates/nunchi-core", "crates/nunchi-cli", "crates/nunchi-tsf", "crates/nunchi-settings", "crates/nunchi-typing-test"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/nyttastudio/araso"
+repository = "https://github.com/mununki/nunchi"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -17,7 +17,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 lto = true
 codegen-units = 1
 
-# araso-core's build script turns ~10 MB of word lists into tables: optimized, it takes a second.
+# nunchi-core's build script turns ~10 MB of word lists into tables: optimized, it takes a second.
 [profile.dev.build-override]
 opt-level = 3
 

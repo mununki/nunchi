@@ -1,7 +1,0 @@
-# Ctrl+Z takes a whole word back, not one jamo at a time, in the fields Araso types into
-# itself (EDIT and RichEdit behind IMM32, as Explorer and KakaoTalk); ⇤ stands for a click that
-# leaves a word behind.
-dkssud gksrnrdj↶	안녕 	edit,richedit-imm
-dkssudgktpdy↶		edit,richedit-imm
-dkssud⇤gksrnr	한국안녕	edit,richedit-imm
-dkssud⇤gksrnr↶	안녕	edit,richedit-imm

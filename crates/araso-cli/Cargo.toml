@@ -1,9 +1,0 @@
-[package]
-name = "araso-cli"
-description = "Araso's decisions from the command line, for tuning and evaluation"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-araso-core = { path = "../araso-core" }

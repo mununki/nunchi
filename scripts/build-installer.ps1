@@ -1,5 +1,5 @@
 # Builds the release input method (64-bit and 32-bit) and the installer:
-# target\installer\Araso-Setup-<version>.exe, the version from Cargo.toml.
+# target\installer\Nunchi-Setup-<version>.exe, the version from Cargo.toml.
 # Needs Inno Setup 6 (winget install JRSoftware.InnoSetup) and the 32-bit Rust target
 # (rustup target add i686-pc-windows-msvc).
 param([string]$Iscc)
@@ -24,15 +24,17 @@ if (-not $Iscc) { throw 'Inno Setup 6 not found (winget install JRSoftware.InnoS
 Push-Location $root
 try {
     # The release identity: no `dev` feature (that one is for scripts\dev-register.ps1).
-    cargo build --release -p araso-tsf
+    cargo build --release -p nunchi-tsf
     if ($LASTEXITCODE) { throw 'build failed (64-bit)' }
-    cargo build --release -p araso-tsf --target i686-pc-windows-msvc
+    cargo build --release -p nunchi-tsf --target i686-pc-windows-msvc
     if ($LASTEXITCODE) { throw 'build failed (32-bit)' }
-    cargo build --release -p araso-settings
+    cargo build --release -p nunchi-settings
     if ($LASTEXITCODE) { throw 'build failed (settings)' }
-    & $Iscc /Qp "/DAppVersion=$version" (Join-Path $root 'installer\araso.iss')
+    # The license notices of the crates these link, for the installer to carry.
+    & (Join-Path $root 'tools\crate-licenses.ps1') | Out-Null
+    & $Iscc /Qp "/DAppVersion=$version" (Join-Path $root 'installer\nunchi.iss')
     if ($LASTEXITCODE) { throw 'installer build failed' }
 } finally {
     Pop-Location
 }
-Write-Output (Join-Path $root "target\installer\Araso-Setup-$version.exe")
+Write-Output (Join-Path $root "target\installer\Nunchi-Setup-$version.exe")

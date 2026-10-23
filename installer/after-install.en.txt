@@ -1,0 +1,26 @@
+﻿Nunchi is installed.
+
+Getting started
+  Choose "Nunchi" under Korean with Win+Space. Apps that are already open use Nunchi once they are restarted.
+  Type on your English keyboard as usual: Nunchi tells English from Korean word by word and puts in the right letters.
+
+Keys
+  The Han/Yeong key, right Alt (pressed and released on its own), Shift+Esc
+    Switch the word being typed, or the word just committed, to the other language.
+    Switching the same word the same way twice teaches Nunchi that word.
+  The Hanja key
+    Pauses or resumes Nunchi in this text field (while paused, keys go in as typed).
+
+Taskbar
+  In the input indicator, "가" means on, and "가" with a small red x means off.
+  A click pauses or resumes it; a right click opens its menu (off in this app, settings).
+
+Settings
+  Open "Nunchi Settings" from the Start menu, or the taskbar icon's menu.
+  Layouts, keys, rules for apps and the words Nunchi learned can be changed there.
+
+If something goes wrong
+  Turn on Settings > 정보 > "진단 기록 남기기", make it happen again, and send the log file from
+  %APPDATA%\Nunchi\logs along. The log never holds what you type.
+
+Nunchi is an unofficial Windows port based on Araso for macOS (nyttastudio).
